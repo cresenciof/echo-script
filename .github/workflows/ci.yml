@@ -45,7 +45,7 @@ jobs:
           fetch-depth: 1
 
       - name: Set up Rust toolchain (pinned)
-        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable @ 2026-04
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable @ 2026-04
         with:
           toolchain: stable
           targets: aarch64-apple-darwin
