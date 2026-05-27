@@ -558,6 +558,113 @@ async fn export_subtitled_video(
     Ok(abs_output)
 }
 
+/// Pre-compute waveform peaks via the bundled ffmpeg so the renderer
+/// doesn't depend on the WKWebView's Web Audio decoder (which fails on
+/// m4a / AAC and a few other Apple-ecosystem containers).
+///
+/// Decodes `audio_path` to mono 16-bit PCM at a low sample rate, walks
+/// the samples in N buckets, and returns the max absolute value per
+/// bucket (normalised to -1..1) plus the precise duration. wavesurfer.js
+/// consumes the array via its `peaks` option, skipping its own
+/// fetch+decode entirely.
+#[derive(serde::Serialize)]
+struct PeaksResponse {
+    peaks: Vec<f32>,
+    duration_s: f64,
+    sample_rate: u32,
+}
+
+#[tauri::command]
+async fn compute_audio_peaks(
+    app: AppHandle,
+    audio_path: String,
+    target_peaks: u32,
+) -> Result<PeaksResponse, String> {
+    if !Path::new(&audio_path).is_file() {
+        return Err(format!("audio file not found: {audio_path}"));
+    }
+    if target_peaks == 0 {
+        return Err("target_peaks must be > 0".to_string());
+    }
+
+    let ffmpeg = resolve_ffmpeg(&app)?;
+
+    // 1 kHz mono i16 is plenty for a visual waveform — ~120 KB/min raw.
+    // We don't need full audio fidelity here; we only need the envelope.
+    const SAMPLE_RATE: u32 = 1000;
+
+    let mut child = Command::new(&ffmpeg)
+        .args([
+            "-v", "error",
+            "-i", &audio_path,
+            "-f", "s16le",
+            "-ac", "1",
+            "-ar", &SAMPLE_RATE.to_string(),
+            "-",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to invoke ffmpeg: {e}"))?;
+
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "ffmpeg stdout pipe missing".to_string())?;
+    let stderr_handle = child.stderr.take();
+
+    // Drain raw PCM bytes into i16 samples.
+    let mut buf = Vec::with_capacity(1024 * 1024);
+    std::io::Read::read_to_end(&mut stdout, &mut buf)
+        .map_err(|e| format!("failed to read ffmpeg stdout: {e}"))?;
+    let status = child
+        .wait()
+        .map_err(|e| format!("ffmpeg wait failed: {e}"))?;
+    if !status.success() {
+        let stderr_text = stderr_handle
+            .and_then(|mut s| {
+                let mut t = String::new();
+                std::io::Read::read_to_string(&mut s, &mut t).ok().map(|_| t)
+            })
+            .unwrap_or_default();
+        return Err(format!(
+            "ffmpeg failed (exit {}): {}",
+            status.code().unwrap_or(-1),
+            stderr_text.lines().rev().take(5).collect::<Vec<_>>().join(" | ")
+        ));
+    }
+
+    if buf.len() < 2 {
+        return Err("ffmpeg produced no audio samples".to_string());
+    }
+    let sample_count = buf.len() / 2;
+    let samples_iter = (0..sample_count).map(|i| {
+        i16::from_le_bytes([buf[i * 2], buf[i * 2 + 1]])
+    });
+
+    // Bucket the samples into `target_peaks` bins. Each bin's peak is the
+    // max absolute value normalised to -1..1.
+    let n = target_peaks as usize;
+    let mut peaks = vec![0.0_f32; n];
+    if sample_count > 0 {
+        let chunk_size = (sample_count + n - 1) / n; // ceiling div
+        for (i, s) in samples_iter.enumerate() {
+            let bin = (i / chunk_size).min(n - 1);
+            let amp = (s.unsigned_abs() as f32) / 32768.0;
+            if amp > peaks[bin] {
+                peaks[bin] = amp;
+            }
+        }
+    }
+
+    let duration_s = sample_count as f64 / SAMPLE_RATE as f64;
+    Ok(PeaksResponse {
+        peaks,
+        duration_s,
+        sample_rate: SAMPLE_RATE,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -629,7 +736,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             get_sidecar_url,
-            export_subtitled_video
+            export_subtitled_video,
+            compute_audio_peaks,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

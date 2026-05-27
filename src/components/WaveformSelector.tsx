@@ -8,6 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play, X } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import WaveSurfer from "wavesurfer.js";
 import RegionsPlugin, {
   type Region,
@@ -18,8 +19,11 @@ import { formatHMS } from "@/lib/timeFormat";
 import { cn } from "@/lib/utils";
 
 interface WaveformSelectorProps {
-  /** Asset URL the WebView can load (already passed through convertFileSrc). */
+  /** Asset URL the WebView can load (used by the audio player; not used to
+   *  generate the waveform — peaks come from the bundled ffmpeg). */
   audioUrl: string;
+  /** Absolute filesystem path passed to `compute_audio_peaks`. */
+  audioPath: string;
   /** Display-friendly filename for the header. */
   filename: string;
   /** Disabled until the engine is ready. */
@@ -34,8 +38,17 @@ interface WaveformSelectorProps {
   onCancel: () => void;
 }
 
+interface PeaksResponse {
+  peaks: number[];
+  duration_s: number;
+  sample_rate: number;
+}
+
+const TARGET_PEAKS = 800;
+
 export function WaveformSelector({
   audioUrl,
+  audioPath,
   filename,
   disabled,
   onConfirm,
@@ -55,74 +68,94 @@ export function WaveformSelector({
     const el = containerRef.current;
     if (!el) return;
 
-    const regions = RegionsPlugin.create();
-    const ws = WaveSurfer.create({
-      container: el,
-      url: audioUrl,
-      // Cool-neutral grays for unselected wave; amber gradient for the
-      // played portion. Keeps the visual language consistent with the rest
-      // of the app (transcript timestamps, play button).
-      waveColor: "oklch(0.42 0.012 250)",
-      progressColor: "oklch(0.78 0.155 75)",
-      cursorColor: "oklch(0.88 0.05 75)",
-      cursorWidth: 2,
-      barWidth: 2,
-      barGap: 1,
-      barRadius: 1,
-      height: 96,
-      normalize: true,
-      plugins: [regions],
-    });
+    let cancelled = false;
+    let ws: WaveSurfer | null = null;
 
-    wsRef.current = ws;
+    const setup = async () => {
+      try {
+        // Decode peaks via the bundled ffmpeg. We do NOT pass `url` to
+        // WaveSurfer — its Web Audio decoder fails on m4a/AAC in WKWebView.
+        // Instead we provide pre-computed peaks + duration; the visual
+        // waveform draws from those directly. The HTML5 <audio> element
+        // (used for preview playback) still loads the asset URL fine.
+        const data = await invoke<PeaksResponse>("compute_audio_peaks", {
+          audioPath,
+          targetPeaks: TARGET_PEAKS,
+        });
+        if (cancelled) return;
 
-    const onReady = () => {
-      const dur = ws.getDuration();
-      setDuration(dur);
-      const r = regions.addRegion({
-        start: 0,
-        end: dur,
-        drag: true,
-        resize: true,
-        color: "oklch(from var(--primary) l c h / 0.18)",
-      });
-      regionRef.current = r;
-      const sync = () => setRange({ start: r.start, end: r.end });
-      r.on("update", sync);
-      r.on("update-end", sync);
-      sync();
-      setReady(true);
-    };
+        const regions = RegionsPlugin.create();
+        ws = WaveSurfer.create({
+          container: el,
+          url: audioUrl, // for playback only; peaks below override decode
+          peaks: [data.peaks],
+          duration: data.duration_s,
+          waveColor: "oklch(0.42 0.012 250)",
+          progressColor: "oklch(0.78 0.155 75)",
+          cursorColor: "oklch(0.88 0.05 75)",
+          cursorWidth: 2,
+          barWidth: 2,
+          barGap: 1,
+          barRadius: 1,
+          height: 96,
+          normalize: true,
+          plugins: [regions],
+        });
+        wsRef.current = ws;
 
-    const onError = (e: Error) => {
-      setError(e.message || "Failed to decode audio");
-    };
+        const dur = data.duration_s;
+        setDuration(dur);
+        const r = regions.addRegion({
+          start: 0,
+          end: dur,
+          drag: true,
+          resize: true,
+          color: "oklch(from var(--primary) l c h / 0.18)",
+        });
+        regionRef.current = r;
+        const sync = () => setRange({ start: r.start, end: r.end });
+        r.on("update", sync);
+        r.on("update-end", sync);
+        sync();
+        setReady(true);
 
-    ws.on("ready", onReady);
-    ws.on("error", onError);
-    ws.on("play", () => setPlaying(true));
-    ws.on("pause", () => setPlaying(false));
-    ws.on("finish", () => setPlaying(false));
-
-    // Bound the playback cursor to the region so playing previews only
-    // the selection — when the cursor reaches region.end, pause.
-    ws.on("timeupdate", (currentTime) => {
-      const r = regionRef.current;
-      if (!r) return;
-      if (playing && currentTime >= r.end) {
-        ws.pause();
-        ws.setTime(r.start);
+        ws.on("error", (e: Error) => {
+          setError(e.message || "Audio playback failed");
+        });
+        ws.on("play", () => setPlaying(true));
+        ws.on("pause", () => setPlaying(false));
+        ws.on("finish", () => setPlaying(false));
+        ws.on("timeupdate", (currentTime) => {
+          const region = regionRef.current;
+          if (!region || !ws) return;
+          if (currentTime >= region.end) {
+            ws.pause();
+            ws.setTime(region.start);
+          }
+        });
+      } catch (e) {
+        if (!cancelled) {
+          setError(
+            e instanceof Error
+              ? e.message
+              : typeof e === "string"
+                ? e
+                : "Couldn't analyze audio",
+          );
+        }
       }
-    });
+    };
+
+    void setup();
 
     return () => {
-      ws.destroy();
+      cancelled = true;
+      ws?.destroy();
       wsRef.current = null;
       regionRef.current = null;
     };
-    // audioUrl is the only meaningful input — re-mounting on it is correct.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audioUrl]);
+  }, [audioPath, audioUrl]);
 
   const playSelection = useCallback(() => {
     const ws = wsRef.current;

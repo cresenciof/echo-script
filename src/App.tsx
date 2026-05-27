@@ -221,6 +221,7 @@ function App() {
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/95 pt-[48px] backdrop-blur-sm">
           <WaveformSelector
             audioUrl={pendingPick.audioUrl}
+            audioPath={pendingPick.path}
             filename={pendingPick.filename}
             disabled={!engineReady}
             onConfirm={handleSelectorConfirm}
