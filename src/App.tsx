@@ -24,7 +24,14 @@ import { EmptyState } from "./components/EmptyState";
 import { Header } from "./components/Header";
 import { JobList } from "./components/JobList";
 import { StatusBar } from "./components/StatusBar";
+import { WaveformSelector } from "./components/WaveformSelector";
 import { WorkspaceView } from "./components/WorkspaceView";
+
+interface PendingPick {
+  path: string;
+  filename: string;
+  audioUrl: string;
+}
 
 import { useShallow } from "zustand/react/shallow";
 
@@ -51,6 +58,10 @@ function App() {
     if (typeof window === "undefined") return false;
     return window.innerWidth < 1024;
   });
+  // When the user picks a file, we don't transcribe immediately — we stash
+  // the pick here and render the WaveformSelector so the user can trim the
+  // range. Confirming the selector calls `start()` with optional start_s/end_s.
+  const [pendingPick, setPendingPick] = useState<PendingPick | null>(null);
   const { start } = useTranscription();
   const { data: health } = useHealth();
   const { data: models } = useModels();
@@ -105,6 +116,15 @@ function App() {
           audioUrl = undefined;
         }
       }
+      // Defer to the WaveformSelector so the user can optionally trim. If
+      // they confirm without moving the handles we transcribe the whole
+      // file, exactly as before.
+      if (audioUrl) {
+        setPendingPick({ path: pick.path, filename: pick.name, audioUrl });
+        return;
+      }
+      // No audio URL (e.g. browser dev without Tauri) — fall back to direct
+      // start so the dev flow still works without the selector.
       await start({
         audioPath: pick.path,
         filename: pick.name,
@@ -114,6 +134,27 @@ function App() {
     },
     [engineReady, selectedModel, start],
   );
+
+  const handleSelectorConfirm = useCallback(
+    async (range: { startS: number; endS: number } | null) => {
+      const pick = pendingPick;
+      if (!pick) return;
+      setPendingPick(null);
+      await start({
+        audioPath: pick.path,
+        filename: pick.filename,
+        audioUrl: pick.audioUrl,
+        model: selectedModel,
+        startS: range?.startS ?? null,
+        endS: range?.endS ?? null,
+      });
+    },
+    [pendingPick, selectedModel, start],
+  );
+
+  const handleSelectorCancel = useCallback(() => {
+    setPendingPick(null);
+  }, []);
 
   // Native Tauri drag-drop. macOS hands us absolute filesystem paths; we
   // filter to media files and route through the same `handlePick` so the
@@ -172,6 +213,21 @@ function App() {
       {/* Native Tauri drag overlay — shown while files are hovering over the
           window (driven by the OS-level drag event, not HTML5). */}
       <DragOverlay active={dragState === "over"} engineReady={engineReady} />
+      {/* Waveform selector — rendered ABOVE the current view (empty state or
+          workspace) as a modal-style overlay until the user confirms or
+          cancels. We give it its own z-index above the drag strip so the
+          close button stays clickable but the title bar drag still works. */}
+      {pendingPick && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/95 pt-[48px] backdrop-blur-sm">
+          <WaveformSelector
+            audioUrl={pendingPick.audioUrl}
+            filename={pendingPick.filename}
+            disabled={!engineReady}
+            onConfirm={handleSelectorConfirm}
+            onCancel={handleSelectorCancel}
+          />
+        </div>
+      )}
       {hasJobs ? (
         <>
           <Header

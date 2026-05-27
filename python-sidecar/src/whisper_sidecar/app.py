@@ -45,6 +45,8 @@ def _job_to_summary(job: Job) -> JobSummary:
         finished_at=job.finished_at,
         error=job.error,
         text=job.text,
+        start_s=job.start_s,
+        end_s=job.end_s,
     )
 
 
@@ -144,7 +146,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not os.path.isfile(req.audio_path):
             raise HTTPException(status_code=400, detail=f"audio file not found: {req.audio_path}")
 
-        job = registry.create(model=req.model, language=req.language, audio_path=req.audio_path)
+        job = registry.create(
+            model=req.model,
+            language=req.language,
+            audio_path=req.audio_path,
+            start_s=req.start_s,
+            end_s=req.end_s,
+        )
         job.attach_loop(request.app.state.loop)
         worker = TranscriptionWorker(registry, job, initial_prompt=req.initial_prompt)
         worker.start()

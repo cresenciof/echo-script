@@ -46,6 +46,10 @@ class Job:
     error: str | None = None
     segments: list[dict[str, Any]] = field(default_factory=list)
     text: str = ""
+    # Optional inclusive slice in seconds (relative to original file). When
+    # both are None the worker transcribes the entire file (legacy fast path).
+    start_s: float | None = None
+    end_s: float | None = None
 
     # Replay buffer + live subscribers. Both guarded by `_lock` for the
     # thread-vs-event-loop boundary.
@@ -117,8 +121,23 @@ class JobRegistry:
         self._history = history
         self._lock = threading.Lock()
 
-    def create(self, *, model: str, language: str | None, audio_path: str) -> Job:
-        job = Job(id=str(uuid.uuid4()), model=model, language=language, audio_path=audio_path)
+    def create(
+        self,
+        *,
+        model: str,
+        language: str | None,
+        audio_path: str,
+        start_s: float | None = None,
+        end_s: float | None = None,
+    ) -> Job:
+        job = Job(
+            id=str(uuid.uuid4()),
+            model=model,
+            language=language,
+            audio_path=audio_path,
+            start_s=start_s,
+            end_s=end_s,
+        )
         job.started_at = time.time()
         with self._lock:
             self._jobs[job.id] = job

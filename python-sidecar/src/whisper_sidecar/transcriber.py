@@ -16,8 +16,12 @@ from __future__ import annotations
 import contextlib
 import io
 import logging
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import Any
@@ -44,6 +48,66 @@ def parse_segment_line(line: str) -> dict[str, Any] | None:
     start = int(sh) * 60 + int(sm) + int(sms) / 1000.0
     end = int(eh) * 60 + int(em) + int(ems) / 1000.0
     return {"start": start, "end": end, "text": text.strip()}
+
+
+def build_ffmpeg_slice_args(
+    ffmpeg: str,
+    input_path: str,
+    output_path: str,
+    start_s: float | None,
+    end_s: float | None,
+) -> list[str]:
+    """Build the ffmpeg argv to extract [start_s, end_s] from ``input_path``.
+
+    Returns an empty list when both endpoints are None — callers must skip
+    invoking ffmpeg entirely in that case (preserves the legacy fast path).
+
+    ``-ss`` is placed BEFORE ``-i`` for fast seek; for audio this is accurate.
+    ``-to`` is an absolute end time relative to the original file (NOT a
+    duration). The audio is downmixed to mono 16 kHz WAV — what mlx_whisper
+    expects natively, so it skips its own ffmpeg re-decode step.
+    """
+    if start_s is None and end_s is None:
+        return []
+    args: list[str] = [ffmpeg, "-y"]
+    if start_s is not None:
+        args += ["-ss", _fmt_seconds(start_s)]
+    if end_s is not None:
+        args += ["-to", _fmt_seconds(end_s)]
+    args += [
+        "-i", input_path,
+        "-vn",            # drop any video tracks (mp4 containers, album art).
+        "-ac", "1",       # mono.
+        "-ar", "16000",   # 16 kHz sample rate.
+        "-f", "wav",      # PCM WAV container.
+        output_path,
+    ]
+    return args
+
+
+def _fmt_seconds(s: float) -> str:
+    """Format seconds for ffmpeg ``-ss`` / ``-to``.
+
+    Integers render without a trailing ``.0`` so callers' assertions stay
+    readable (and ffmpeg accepts both forms).
+    """
+    if float(s).is_integer():
+        return str(int(s))
+    # Trim trailing zeros and any orphan decimal point.
+    return f"{s:.6f}".rstrip("0").rstrip(".")
+
+
+def offset_segment(seg: dict[str, Any], offset: float) -> dict[str, Any]:
+    """Return a copy of ``seg`` with ``start`` and ``end`` shifted by ``offset``.
+
+    Used to translate mlx_whisper's slice-relative timestamps (which always
+    start at 0 because we hand it a freshly sliced file) back into absolute
+    timestamps in the original file. Leaves the rest of the dict untouched.
+    """
+    shifted = dict(seg)
+    shifted["start"] = float(seg["start"]) + offset
+    shifted["end"] = float(seg["end"]) + offset
+    return shifted
 
 
 class _SegmentCaptureStream(io.TextIOBase):
@@ -166,6 +230,10 @@ class TranscriptionWorker:
         self._thread: threading.Thread | None = None
         self._last_download_emit_at: float = 0.0
         self._last_download_filename: str = ""
+        # Offset applied to every segment timestamp emitted by mlx_whisper so
+        # the UI always sees absolute times relative to the original file —
+        # even when we hand mlx_whisper a sliced fragment that starts at 0.
+        self._offset: float = job.start_s or 0.0
 
     def start(self) -> None:
         self._thread = threading.Thread(
@@ -176,10 +244,16 @@ class TranscriptionWorker:
     # -- internal --------------------------------------------------------------
 
     def _emit_progress(self, current_s: float) -> None:
+        # ``current_s`` is ALREADY in absolute (original-file) coordinates
+        # because callers add the offset before invoking us. ``total`` is the
+        # SELECTED duration so the percent reflects progress through the slice,
+        # but we compare against (start + slice_duration) to keep the math
+        # consistent with the absolute current_s.
         total = self.job.audio_duration_s
         percent: float | None = None
         if total and total > 0:
-            percent = min(100.0, (current_s / total) * 100.0)
+            elapsed = max(0.0, current_s - self._offset)
+            percent = min(100.0, (elapsed / total) * 100.0)
         self.job.publish(
             SseEvent(
                 event="progress",
@@ -188,6 +262,10 @@ class TranscriptionWorker:
         )
 
     def _on_segment(self, seg: dict[str, Any]) -> None:
+        # mlx_whisper times segments relative to whatever file we passed it.
+        # When we slice, that file starts at 0 — so add the offset before
+        # surfacing the segment anywhere (job state, SSE, progress).
+        seg = offset_segment(seg, self._offset)
         # Stash on the job for later GET /jobs/{id} polling.
         self.job.segments.append(seg)
         self.job.publish(SseEvent(event="segment", data=seg))
@@ -225,11 +303,29 @@ class TranscriptionWorker:
     def _run(self) -> None:
         job = self.job
         job.status = "running"
+        sliced_path: str | None = None
         try:
-            # 1. Pre-flight: audio duration for accurate progress %.
-            job.audio_duration_s = probe_duration_seconds(job.audio_path)
+            # 1. Pre-flight: audio duration. When a slice is requested we
+            #    report the SELECTED duration so the UI's audio scrubber and
+            #    progress percent line up with what the user is hearing.
+            if job.start_s is not None or job.end_s is not None:
+                full_dur = probe_duration_seconds(job.audio_path)
+                start = job.start_s or 0.0
+                end = job.end_s if job.end_s is not None else (full_dur or 0.0)
+                job.audio_duration_s = max(0.0, end - start)
+            else:
+                job.audio_duration_s = probe_duration_seconds(job.audio_path)
 
-            # 2. Import lazily so server startup stays fast even if MLX isn't ready.
+            # 2. If a slice was requested, materialize it into a temp WAV up
+            #    front. mlx_whisper sees a fresh file that starts at 0; the
+            #    offset is added back to every timestamp before it leaves
+            #    this module.
+            transcribe_path = job.audio_path
+            if job.start_s is not None or job.end_s is not None:
+                sliced_path = self._make_slice(job.audio_path, job.start_s, job.end_s)
+                transcribe_path = sliced_path
+
+            # 3. Import lazily so server startup stays fast even if MLX isn't ready.
             import mlx_whisper  # type: ignore[import-untyped]
 
             kwargs: dict[str, Any] = {
@@ -258,7 +354,7 @@ class TranscriptionWorker:
                 with contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):
                     if job.cancel_flag.is_set():
                         raise InterruptedError("cancelled before start")
-                    result = mlx_whisper.transcribe(job.audio_path, **kwargs)
+                    result = mlx_whisper.transcribe(transcribe_path, **kwargs)
             finally:
                 lifecycle.end_use()
             stdout_capture.flush()
@@ -269,9 +365,17 @@ class TranscriptionWorker:
                 raise InterruptedError("cancelled during run")
 
             # mlx_whisper's own segment list is authoritative — replace our
-            # stdout-parsed shadow copy with the real one.
+            # stdout-parsed shadow copy with the real one. Apply the slice
+            # offset so timestamps are absolute in the original file.
             real_segments = [
-                {"start": float(s["start"]), "end": float(s["end"]), "text": s["text"].strip()}
+                offset_segment(
+                    {
+                        "start": float(s["start"]),
+                        "end": float(s["end"]),
+                        "text": s["text"].strip(),
+                    },
+                    self._offset,
+                )
                 for s in result.get("segments", [])
             ]
             job.segments = real_segments
@@ -301,4 +405,42 @@ class TranscriptionWorker:
             job.finished_at = time.time()
             job.publish(SseEvent(event="error", data={"message": job.error}))
         finally:
+            # Best-effort cleanup of the sliced temp file. We deliberately
+            # avoid NamedTemporaryFile's auto-delete (delete=True) because
+            # ffmpeg writes to the path while we hold the handle elsewhere;
+            # explicit unlink in finally guarantees it runs on cancel too.
+            if sliced_path is not None:
+                try:
+                    os.unlink(sliced_path)
+                except OSError:
+                    logger.warning("failed to unlink sliced temp file %s", sliced_path)
             job.close_subscribers()
+
+    def _make_slice(
+        self, input_path: str, start_s: float | None, end_s: float | None
+    ) -> str:
+        """Run ffmpeg to write a sliced WAV to a temp path. Returns the path.
+
+        Raises ``RuntimeError`` if ffmpeg is missing or exits non-zero — the
+        caller's ``except Exception`` branch will mark the job as ``error``
+        and surface the stderr tail.
+        """
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            raise RuntimeError(
+                "ffmpeg not found on PATH; required for slicing audio "
+                "(start_s / end_s)."
+            )
+        # delete=False so the file survives the with-block; the caller's
+        # finally cleans it up. suffix=.wav so ffmpeg's `-f wav` writes a
+        # valid file the OS recognizes.
+        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        tmp.close()
+        args = build_ffmpeg_slice_args(ffmpeg, input_path, tmp.name, start_s, end_s)
+        proc = subprocess.run(args, capture_output=True, text=True)
+        if proc.returncode != 0:
+            # Bubble the last few stderr lines so the user can diagnose
+            # "file not found", "invalid duration", etc.
+            tail = "\n".join(proc.stderr.strip().splitlines()[-5:])
+            raise RuntimeError(f"ffmpeg slice failed (rc={proc.returncode}): {tail}")
+        return tmp.name

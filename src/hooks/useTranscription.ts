@@ -21,6 +21,9 @@ interface StartArgs {
   audioUrl?: string;
   model: string;
   language?: string | null;
+  /** Optional slice: only transcribe `[startS, endS]` of the source file. */
+  startS?: number | null;
+  endS?: number | null;
 }
 
 interface StartResult {
@@ -69,6 +72,8 @@ export function useTranscription() {
         audio_path: args.audioPath,
         model: args.model,
         language: args.language ?? null,
+        start_s: args.startS ?? null,
+        end_s: args.endS ?? null,
       });
       serverJobId = job_id;
       useJobsStore.getState().renameJob(localId, job_id);

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class HealthResponse(BaseModel):
@@ -39,6 +39,38 @@ class TranscribeRequest(BaseModel):
         default=None,
         description="Optional seed prompt to bias the decoder.",
     )
+    start_s: float | None = Field(
+        default=None,
+        description=(
+            "Inclusive range in seconds. None means start at 0 / end at end of file. "
+            "Both None means transcribe the entire file (default)."
+        ),
+    )
+    end_s: float | None = Field(
+        default=None,
+        description=(
+            "Inclusive range in seconds. None means start at 0 / end at end of file. "
+            "Both None means transcribe the entire file (default)."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_range(self) -> "TranscribeRequest":
+        # Enforce semantics for the optional slice. We do NOT default the
+        # missing endpoint here — the worker resolves "None means end of file"
+        # against the actual ffprobed duration. We only reject obviously
+        # incoherent inputs at the API boundary.
+        if self.start_s is not None and self.start_s < 0:
+            raise ValueError("start_s must be >= 0")
+        if self.end_s is not None and self.end_s < 0:
+            raise ValueError("end_s must be >= 0")
+        if (
+            self.start_s is not None
+            and self.end_s is not None
+            and self.end_s <= self.start_s
+        ):
+            raise ValueError("end_s must be greater than start_s")
+        return self
 
 
 class TranscribeAccepted(BaseModel):
@@ -62,6 +94,8 @@ class JobSummary(BaseModel):
     finished_at: float | None
     error: str | None
     text: str
+    start_s: float | None = None
+    end_s: float | None = None
 
 
 class JobDetail(JobSummary):

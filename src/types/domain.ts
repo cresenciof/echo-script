@@ -51,6 +51,9 @@ export interface TranscribeRequest {
   model: string;
   language?: string | null;
   initial_prompt?: string | null;
+  /** Inclusive selection range in seconds. Both null = transcribe full file. */
+  start_s?: number | null;
+  end_s?: number | null;
 }
 
 export interface TranscribeAccepted {
