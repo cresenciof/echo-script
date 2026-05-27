@@ -15,6 +15,16 @@ import signal
 import socket
 import sys
 
+# Make sibling binaries (ffmpeg, ffprobe — bundled next to the Python
+# interpreter inside .venv-bundle/bin/) discoverable via subprocess.
+# mlx_whisper shells out to ffmpeg to decode audio, and audio.py uses
+# shutil.which("ffprobe"). When the macOS .app is launched via Finder
+# the inherited PATH is minimal and won't include /opt/homebrew/bin or
+# similar, so we explicitly inject our own bin dir.
+_sibling_bin = os.path.join(sys.prefix, "bin")
+if os.path.isdir(_sibling_bin):
+    os.environ["PATH"] = _sibling_bin + os.pathsep + os.environ.get("PATH", "")
+
 import uvicorn
 
 from .app import create_app

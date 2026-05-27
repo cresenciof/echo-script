@@ -71,7 +71,15 @@ export function AudioPlayer({ src, fallbackDuration }: AudioPlayerProps) {
     };
   }, [_setState]);
 
-  const total = duration > 0 ? duration : fallbackDuration ?? 0;
+  // Prefer the sidecar's duration (computed from ffprobe — same value the
+  // workspace header shows) so both displays agree. Fall back to the audio
+  // element's reported duration only when the sidecar hasn't sent one.
+  const total =
+    fallbackDuration && fallbackDuration > 0
+      ? fallbackDuration
+      : duration > 0
+        ? duration
+        : 0;
   const percent = total > 0 ? Math.min(100, (currentTime / total) * 100) : 0;
   const hasAudio = Boolean(src);
 

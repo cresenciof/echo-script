@@ -61,10 +61,17 @@ export function TranscriptView({ job, editing, onEdit }: TranscriptViewProps) {
   const isLive = job.status === "running" || job.status === "queued";
 
   return (
-    <div
-      ref={containerRef}
-      className="relative flex h-full flex-col overflow-y-auto px-10 pb-10 pt-6"
-    >
+    <div className="relative flex h-full min-h-0 flex-1 flex-col">
+      {/* Fade gradient at the top so segments scrolling out of view dissolve
+          into the workspace header instead of clipping abruptly. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-gradient-to-b from-background via-background/85 to-transparent"
+      />
+      <div
+        ref={containerRef}
+        className="flex-1 overflow-y-auto px-10 pb-10 pt-10"
+      >
       <div className="mx-auto w-full max-w-[760px] flex flex-col gap-1.5">
         {job.segments.length === 0 && !isLive && (
           <p className="py-12 text-center text-sm text-muted-foreground">
@@ -136,6 +143,7 @@ export function TranscriptView({ job, editing, onEdit }: TranscriptViewProps) {
             </button>
           );
         })}
+      </div>
       </div>
     </div>
   );

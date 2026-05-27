@@ -27,7 +27,7 @@ export function JobList({ onPick, disabled }: JobListProps) {
   return (
     <aside
       aria-label="Transcription jobs"
-      className="flex h-full w-[280px] shrink-0 flex-col border-r border-border bg-surface-sunken"
+      className="flex h-full w-[280px] shrink-0 flex-col border-r border-border-strong bg-surface-sunken"
     >
       <div className="flex items-center justify-between px-4 pt-4 pb-2">
         <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/80">

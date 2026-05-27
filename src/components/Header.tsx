@@ -22,7 +22,15 @@ export function Header({ selectedModel, onSelectModel }: HeaderProps) {
       className="relative z-20 flex h-[52px] shrink-0 items-center justify-between border-b border-border bg-background/80 pl-[88px] pr-4 backdrop-blur-xl"
     >
       <div className="flex items-center gap-2.5" data-no-drag>
-        <div className="relative flex h-6 w-6 items-center justify-center rounded-md bg-primary/10 ring-1 ring-primary/30">
+        <div
+          className="relative flex h-6 w-6 items-center justify-center rounded-md bg-primary/20 ring-1 ring-primary/50"
+          style={{
+            // Subtle ambient glow so the wave mark catches the eye like the
+            // primary play button at the bottom of the workspace.
+            boxShadow:
+              "0 0 14px 0 oklch(from var(--primary) l c h / 0.32)",
+          }}
+        >
           <Waves
             className="h-3.5 w-3.5 text-primary"
             strokeWidth={2.4}

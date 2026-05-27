@@ -162,7 +162,10 @@ function StatusPill({ status }: { status: UIJob["status"] }) {
     done: {
       label: "Complete",
       icon: CheckCircle2,
-      className: "border-success/30 bg-success/15 text-success",
+      // Softer than the running/error pills — finished is the resting state.
+      // Lower opacity ring + no background fill so the green doesn't compete
+      // with the primary amber.
+      className: "border-success/20 bg-transparent text-success/80",
       iconClass: "",
     },
     error: {
