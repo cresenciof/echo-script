@@ -36,13 +36,27 @@ interface Props {
   job: UIJob;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * When set, the dialog opens with this mode pre-selected. If `lockMode`
+   * is true, the mode picker is hidden so the user goes straight to the
+   * save dialog — both modes are surfaced as distinct buttons in
+   * ExportBar instead.
+   */
+  defaultMode?: SubtitleMode;
+  lockMode?: boolean;
 }
 
 const baseNameOf = (path: string): string =>
   (path.split(/[\\/]/).pop() ?? path).replace(/\.[^/.]+$/, "");
 
-export function SubtitleExportDialog({ job, open, onOpenChange }: Props) {
-  const [mode, setMode] = useState<SubtitleMode>("soft");
+export function SubtitleExportDialog({
+  job,
+  open,
+  onOpenChange,
+  defaultMode = "soft",
+  lockMode = false,
+}: Props) {
+  const [mode, setMode] = useState<SubtitleMode>(defaultMode);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<FfmpegProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -50,11 +64,13 @@ export function SubtitleExportDialog({ job, open, onOpenChange }: Props) {
 
   useEffect(() => {
     if (!open) {
-      setMode("soft");
+      setMode(defaultMode);
       setProgress(null);
       setError(null);
+    } else {
+      setMode(defaultMode);
     }
-  }, [open]);
+  }, [open, defaultMode]);
 
   useEffect(() => {
     return () => {
@@ -122,28 +138,40 @@ export function SubtitleExportDialog({ job, open, onOpenChange }: Props) {
     >
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Export subtitled video</DialogTitle>
+          <DialogTitle>
+            {lockMode
+              ? mode === "burn"
+                ? "Export video with burned subtitles"
+                : "Export video with soft subtitles"
+              : "Export subtitled video"}
+          </DialogTitle>
           <DialogDescription>
-            Embed the transcript into the original video.
+            {lockMode
+              ? mode === "burn"
+                ? "Re-encodes the video with subtitles rendered into the picture. Takes minutes."
+                : "Embeds an extra subtitle track. Toggleable in QuickTime / VLC. Finishes in seconds."
+              : "Embed the transcript into the original video."}
           </DialogDescription>
         </DialogHeader>
 
-        <fieldset className="flex flex-col gap-2" disabled={running}>
-          <SubtitleModeOption
-            value="soft"
-            current={mode}
-            onSelect={setMode}
-            title="Soft subtitles (recommended, fast)"
-            description="Adds an embedded subtitle track. Toggleable in QuickTime / VLC. Lossless, finishes in seconds."
-          />
-          <SubtitleModeOption
-            value="burn"
-            current={mode}
-            onSelect={setMode}
-            title="Burn into video (slower, always visible)"
-            description="Re-encodes the video with subtitles rendered into the picture. Best for social media uploads."
-          />
-        </fieldset>
+        {!lockMode && (
+          <fieldset className="flex flex-col gap-2" disabled={running}>
+            <SubtitleModeOption
+              value="soft"
+              current={mode}
+              onSelect={setMode}
+              title="Soft subtitles (recommended, fast)"
+              description="Adds an embedded subtitle track. Toggleable in QuickTime / VLC. Lossless, finishes in seconds."
+            />
+            <SubtitleModeOption
+              value="burn"
+              current={mode}
+              onSelect={setMode}
+              title="Burn into video (slower, always visible)"
+              description="Re-encodes the video with subtitles rendered into the picture. Best for social media uploads."
+            />
+          </fieldset>
+        )}
 
         {running && (
           <div className="flex flex-col gap-2">

@@ -16,7 +16,7 @@ from sse_starlette.sse import EventSourceResponse
 from . import __version__
 from .config import MODELS, Settings
 from .hf_cache import installed_model_ids
-from .jobs import END_SENTINEL, Job, JobRegistry
+from .jobs import END_SENTINEL, Job, JobRegistry, SseEvent
 from .models import (
     HealthResponse,
     JobDetail,
@@ -169,8 +169,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="job not found")
         return _job_to_detail(job)
 
+    @app.post("/jobs/{job_id}/cancel", response_model=JobSummary)
+    async def cancel_job(job_id: str) -> JobSummary:
+        """Logical cancel: sets the worker's cancel_flag and marks the job
+        as `cancelled`. The mlx_whisper call may still run to completion
+        internally — the worker discards its result. We KEEP the job in
+        the registry so the user can still see whatever segments arrived
+        before the cancel.
+        """
+        job = registry.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="job not found")
+        if job.is_finished():
+            # Idempotent: cancelling a finished job is a no-op.
+            return _job_to_summary(job)
+        job.cancel_flag.set()
+        # Mark status optimistically. The worker's InterruptedError handler
+        # will also set this when mlx_whisper returns, but we don't want to
+        # wait for that — the user clicked cancel, the UI shows cancelled
+        # now.
+        job.status = "cancelled"
+        job.publish(SseEvent(event="cancelled", data={"message": "cancelled by user"}))
+        # Don't close subscribers yet — let the worker emit its final
+        # cancelled event when mlx_whisper returns so any SSE replay logic
+        # stays consistent.
+        return _job_to_summary(job)
+
     @app.delete("/jobs/{job_id}", status_code=204)
     async def delete_job(job_id: str) -> Response:
+        """Destructive remove: cancels (if running) AND drops the job from
+        the in-memory registry. For "cancel but keep result" use
+        POST /jobs/{id}/cancel.
+        """
         job = registry.get(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="job not found")

@@ -81,6 +81,11 @@ export const api = {
   getJob(id: string): Promise<JobDetail> {
     return request<JobDetail>(`/jobs/${encodeURIComponent(id)}`);
   },
+  cancelJob(id: string): Promise<unknown> {
+    return request<unknown>(`/jobs/${encodeURIComponent(id)}/cancel`, {
+      method: "POST",
+    });
+  },
 };
 
 export { ApiError };

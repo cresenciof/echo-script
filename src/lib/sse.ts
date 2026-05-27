@@ -16,6 +16,8 @@ export interface JobStreamHandlers {
   onSegment?: (e: SegmentEvent) => void;
   onDone?: (e: DoneEvent) => void;
   onError?: (e: JobErrorEvent) => void;
+  /** Distinct from onError — emitted when a job is cancelled by the user. */
+  onCancelled?: (e: { message: string }) => void;
   /** Fires while huggingface_hub is downloading the model on first use. */
   onModelDownload?: (e: ModelDownloadEvent) => void;
   /** Fires when the EventSource itself errors (connection loss). */
@@ -63,6 +65,12 @@ export function subscribeToJob(
     source.addEventListener("model_download", (raw: MessageEvent) => {
       const data = parse<ModelDownloadEvent>(raw);
       if (data) handlers.onModelDownload?.(data);
+    });
+  }
+  if (handlers.onCancelled) {
+    source.addEventListener("cancelled", (raw: MessageEvent) => {
+      const data = parse<{ message: string }>(raw);
+      if (data) handlers.onCancelled?.(data);
     });
   }
   if (handlers.onError) {

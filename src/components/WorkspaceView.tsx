@@ -5,7 +5,7 @@
  * - Body: TranscriptView OR TranscriptEditor.
  * - Footer: AudioPlayer + ExportBar (export only when done).
  */
-import { CheckCircle2, CircleAlert, Loader2 } from "lucide-react";
+import { CheckCircle2, CircleAlert, Loader2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AudioPlayer } from "./AudioPlayer";
@@ -15,6 +15,7 @@ import { TranscriptEditor } from "./TranscriptEditor";
 import { TranscriptView } from "./TranscriptView";
 
 import { useModels } from "@/hooks/useModels";
+import { useTranscription } from "@/hooks/useTranscription";
 import { estimateRemaining, formatHMS } from "@/lib/timeFormat";
 import { cn } from "@/lib/utils";
 import type { UIJob } from "@/types/domain";
@@ -126,7 +127,12 @@ function JobHeader({ job, modelLabel, running, percent }: JobHeaderProps) {
           </div>
         </div>
 
-        <StatusPill status={job.status} />
+        <div className="flex items-center gap-2">
+          {(job.status === "running" || job.status === "queued") && (
+            <CancelButton jobId={job.id} />
+          )}
+          <StatusPill status={job.status} />
+        </div>
       </div>
 
       {isDownloading && job.modelDownload ? (
@@ -212,5 +218,28 @@ function StatusPill({ status }: { status: UIJob["status"] }) {
       <Icon className={cn("h-3 w-3", entry.iconClass)} aria-hidden />
       {entry.label}
     </span>
+  );
+}
+
+/**
+ * Small cancel button rendered next to the StatusPill while a job is in
+ * flight. Calls the `cancel` action which optimistically flips the job
+ * to "cancelled" so the UI feels instant — the sidecar's mlx_whisper
+ * call continues internally but the worker discards its result. There
+ * is no confirmation prompt: cancelling is reversible (re-drop the file).
+ */
+function CancelButton({ jobId }: { jobId: string }) {
+  const { cancel } = useTranscription();
+  return (
+    <button
+      type="button"
+      onClick={() => void cancel(jobId)}
+      aria-label="Cancel transcription"
+      title="Cancel transcription"
+      className="inline-flex h-6 items-center gap-1 rounded-full border border-destructive/30 bg-destructive/10 px-2 font-mono text-[10.5px] uppercase tracking-[0.16em] text-destructive transition-colors hover:bg-destructive/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+    >
+      <X className="h-3 w-3" aria-hidden />
+      Cancel
+    </button>
   );
 }

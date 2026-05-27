@@ -394,10 +394,14 @@ class TranscriptionWorker:
                 )
             )
         except InterruptedError as exc:
+            # Cancelled either before start or after mlx_whisper returns.
+            # We emit a distinct `cancelled` event (not `error`) so the
+            # frontend can render this as a deliberate user action rather
+            # than a failure.
             job.status = "cancelled"
             job.error = str(exc) or "cancelled"
             job.finished_at = time.time()
-            job.publish(SseEvent(event="error", data={"message": job.error}))
+            job.publish(SseEvent(event="cancelled", data={"message": job.error}))
         except Exception as exc:
             logger.exception("transcription failed for job %s", job.id)
             job.status = "error"

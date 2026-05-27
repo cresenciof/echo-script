@@ -135,11 +135,40 @@ export function useTranscription() {
         subsRef.current.get(serverJobId!)?.();
         subsRef.current.delete(serverJobId!);
       },
+      onCancelled: () => {
+        // The user already saw "Cancelled" via the optimistic update in
+        // `cancel()`. This server-confirmed event mostly ensures we close
+        // the subscription if the user didn't click cancel themselves
+        // (e.g. another window cancelled the same job).
+        useJobsStore.getState().updateJob(serverJobId!, {
+          status: "cancelled",
+        });
+        subsRef.current.get(serverJobId!)?.();
+        subsRef.current.delete(serverJobId!);
+      },
     });
     subsRef.current.set(serverJobId, cleanup);
 
     return { localId };
   }, []);
 
-  return { start };
+  const cancel = useCallback(async (jobId: string): Promise<void> => {
+    // Optimistic: flip the local job to "cancelled" immediately so the UI
+    // reacts instantly, then fire the API call. Drop our SSE subscription
+    // so further events for this job don't reanimate it.
+    useJobsStore.getState().updateJob(jobId, { status: "cancelled" });
+    subsRef.current.get(jobId)?.();
+    subsRef.current.delete(jobId);
+    try {
+      await api.cancelJob(jobId);
+      toast.message("Transcription cancelled.");
+    } catch (err) {
+      // The server-side cancel is best-effort; if it fails we still keep
+      // the optimistic UI state because there's nothing useful to surface.
+      const message = err instanceof ApiError ? err.message : "Cancel failed.";
+      toast.error(message);
+    }
+  }, []);
+
+  return { start, cancel };
 }

@@ -6,11 +6,19 @@
  * download (handy in dev).
  */
 import { save } from "@tauri-apps/plugin-dialog";
-import { ClipboardCheck, Copy, Download, FileCode2, Film } from "lucide-react";
+import {
+  ClipboardCheck,
+  Copy,
+  Download,
+  FileCode2,
+  Film,
+  Flame,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { SubtitleExportDialog } from "@/components/SubtitleExportDialog";
+import type { SubtitleMode } from "@/components/SubtitleModeOption";
 import { Button } from "@/components/ui/button";
 import { useExporter } from "@/hooks/useExporter";
 import { isVideoFile } from "@/lib/audioFormats";
@@ -60,7 +68,7 @@ function downloadBlob(filename: string, contents: string) {
 export function ExportBar({ job, editing, onToggleEdit }: ExportBarProps) {
   const exporter = useExporter(job);
   const [copied, setCopied] = useState(false);
-  const [subsOpen, setSubsOpen] = useState(false);
+  const [subsMode, setSubsMode] = useState<SubtitleMode | null>(null);
   const disabled = !exporter || job.status !== "done";
   const isVideo = isVideoFile(job.audio_path);
 
@@ -127,11 +135,23 @@ export function ExportBar({ job, editing, onToggleEdit }: ExportBarProps) {
               variant="outline"
               size="sm"
               disabled={disabled}
-              onClick={() => setSubsOpen(true)}
+              onClick={() => setSubsMode("soft")}
+              title="Embed an extra subtitle track. Toggleable in QuickTime / VLC."
               className="h-7 gap-1.5 border-border bg-card px-2.5 font-mono text-[10.5px] uppercase tracking-wider"
             >
               <Film className="h-3 w-3" aria-hidden />
-              With subs
+              Soft subs
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={disabled}
+              onClick={() => setSubsMode("burn")}
+              title="Re-encode the video with subtitles rendered into the picture. Takes minutes."
+              className="h-7 gap-1.5 border-primary/40 bg-primary/10 px-2.5 font-mono text-[10.5px] uppercase tracking-wider text-primary hover:bg-primary/15"
+            >
+              <Flame className="h-3 w-3" aria-hidden />
+              Burn-in
             </Button>
           </>
         )}
@@ -171,8 +191,10 @@ export function ExportBar({ job, editing, onToggleEdit }: ExportBarProps) {
       {isVideo && (
         <SubtitleExportDialog
           job={job}
-          open={subsOpen}
-          onOpenChange={setSubsOpen}
+          open={subsMode !== null}
+          onOpenChange={(o) => !o && setSubsMode(null)}
+          defaultMode={subsMode ?? "soft"}
+          lockMode
         />
       )}
     </div>
