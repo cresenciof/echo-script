@@ -93,7 +93,15 @@ jobs:
           clang --version
 
       - name: Install Node dependencies (frozen)
-        run: pnpm install --frozen-lockfile
+        # pnpm 10 in CI ignores both `pnpm-workspace.yaml` and the `pnpm` field
+        # in `package.json` for `onlyBuiltDependencies`. To unblock the build
+        # deterministically, skip all postinstall scripts during install and
+        # then explicitly rebuild esbuild — the one package that legitimately
+        # needs its postinstall (downloads platform native binary).
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm rebuild esbuild
 
       - name: Install Python sidecar dependencies (frozen)
         working-directory: python-sidecar

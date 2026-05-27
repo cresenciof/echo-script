@@ -67,7 +67,12 @@ jobs:
           enable-cache: true
 
       - name: Install Node dependencies (frozen)
-        run: pnpm install --frozen-lockfile
+        # See release.yml — pnpm 10 CI ignores onlyBuiltDependencies config in
+        # this setup, so we explicitly skip postinstalls and rebuild esbuild.
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm rebuild esbuild
 
       - name: Install Python sidecar dependencies (frozen, with dev extras)
         working-directory: python-sidecar
