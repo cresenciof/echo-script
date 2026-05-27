@@ -40,11 +40,22 @@ if [[ -d "$BUNDLE_DIR" ]]; then
   rm -rf "$BUNDLE_DIR"
 fi
 
-# Build the relocatable venv. --relocatable rewrites the activation scripts and
-# shebangs so the venv works after being moved (essential for shipping inside
-# Contents/Resources of an .app bundle that the user can install anywhere).
-echo "[bundle] creating relocatable venv"
-"$UV_BIN" venv --relocatable --python ">=3.12" "$BUNDLE_DIR"
+# Build the relocatable venv. Two things matter here for cross-machine portability:
+#
+#   1. `--relocatable` rewrites activation scripts and shebangs so the venv
+#      works after being moved.
+#   2. We force uv to use a **uv-managed** (python-build-standalone) interpreter
+#      via UV_PYTHON_PREFERENCE=only-managed. System Pythons on macOS (Homebrew,
+#      pyenv) link Python.framework with absolute paths like
+#      `/opt/homebrew/Cellar/python@3.14/.../Python.framework/...` which DO NOT
+#      resolve on another Mac. python-build-standalone uses `@executable_path`
+#      rpaths and is genuinely portable.
+echo "[bundle] ensuring uv-managed cpython-3.12 is installed"
+"$UV_BIN" python install 3.12
+
+echo "[bundle] creating relocatable venv with uv-managed python"
+UV_PYTHON_PREFERENCE=only-managed \
+  "$UV_BIN" venv --relocatable --python 3.12 "$BUNDLE_DIR"
 
 # Install runtime deps into the relocatable venv. We deliberately install the
 # project NON-editable so the venv carries an installed copy of whisper_sidecar
@@ -61,6 +72,24 @@ echo "[bundle] installing dependencies into $BUNDLE_DIR"
 if grep -qE "^home = " "$BUNDLE_DIR/pyvenv.cfg" && ! grep -q "relocatable" "$BUNDLE_DIR/pyvenv.cfg"; then
   echo "[bundle] WARNING: pyvenv.cfg appears non-relocatable. Contents:" >&2
   cat "$BUNDLE_DIR/pyvenv.cfg" >&2
+fi
+
+# Cross-machine portability check on macOS: the Python interpreter must NOT
+# reference dylibs by build-machine-specific absolute paths. python-build-
+# standalone uses @executable_path / @rpath; system Pythons typically use
+# /opt/homebrew/... or /Library/Frameworks/... which only resolve on the
+# build machine. Bail if we see one.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  PY_BIN="$BUNDLE_DIR/bin/python"
+  echo "[bundle] checking $PY_BIN dylib refs for non-portable paths"
+  if otool -L "$PY_BIN" 2>/dev/null | tail -n +2 | grep -E "^\s+/(opt|Users|usr/local|Library)/" >/dev/null; then
+    echo "[bundle] ERROR: python binary has non-portable dylib refs:" >&2
+    otool -L "$PY_BIN" | tail -n +2 | grep -E "^\s+/(opt|Users|usr/local|Library)/" >&2
+    echo "[bundle] This venv would break on any machine without those exact paths." >&2
+    echo "[bundle] Did UV_PYTHON_PREFERENCE=only-managed not take effect?" >&2
+    exit 1
+  fi
+  echo "[bundle] OK — all dylib refs are @executable_path / @rpath / system."
 fi
 
 # Functional sanity-test: relocate the venv to /tmp, start it, parse the
