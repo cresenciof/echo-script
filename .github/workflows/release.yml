@@ -99,6 +99,12 @@ jobs:
         working-directory: python-sidecar
         run: uv sync --frozen
 
+      - name: Build relocatable Python sidecar bundle
+        # MUST run before cargo check — Tauri's build.rs validates
+        # bundle.resources paths at compile time, so .venv-bundle must
+        # exist before any cargo invocation.
+        run: bash scripts/build-sidecar-bundle.sh
+
       - name: Pre-release sanity — TypeScript typecheck
         run: pnpm exec tsc --noEmit
 
