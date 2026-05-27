@@ -99,9 +99,6 @@ jobs:
         working-directory: python-sidecar
         run: uv sync --frozen
 
-      - name: Build relocatable Python sidecar bundle
-        run: bash scripts/build-sidecar-bundle.sh
-
       - name: Pre-release sanity — TypeScript typecheck
         run: pnpm exec tsc --noEmit
 
