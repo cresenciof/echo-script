@@ -4,7 +4,7 @@
  * or a `local-*` id for entries that exist before /transcribe responds).
  */
 import { create } from "zustand";
-import type { Segment, UIJob } from "@/types/domain";
+import type { ModelDownloadEvent, Segment, UIJob } from "@/types/domain";
 
 interface JobsState {
   jobs: Record<string, UIJob>;
@@ -19,6 +19,12 @@ interface JobsState {
   updateSegment: (id: string, idx: number, text: string) => void;
   setActive: (id: string | null) => void;
   removeJob: (id: string) => void;
+  /**
+   * Update (or clear with `null`) the latest huggingface_hub download
+   * progress payload for a job. Cleared automatically when the first
+   * segment arrives.
+   */
+  setModelDownload: (id: string, payload: ModelDownloadEvent | null) => void;
 }
 
 export const useJobsStore = create<JobsState>((set) => ({
@@ -56,10 +62,21 @@ export const useJobsStore = create<JobsState>((set) => ({
     set((s) => {
       const job = s.jobs[id];
       if (!job) return s;
+      // The first incoming segment marks the end of the model-download phase
+      // (huggingface_hub downloads finish BEFORE mlx_whisper emits any
+      // segments). Clear the banner here so the UI flips back to the normal
+      // transcribing view without needing a second source of truth.
+      const cleared = job.segments.length === 0 && job.modelDownload
+        ? { modelDownload: null as ModelDownloadEvent | null }
+        : null;
       return {
         jobs: {
           ...s.jobs,
-          [id]: { ...job, segments: [...job.segments, segment] },
+          [id]: {
+            ...job,
+            segments: [...job.segments, segment],
+            ...(cleared ?? {}),
+          },
         },
       };
     }),
@@ -77,6 +94,13 @@ export const useJobsStore = create<JobsState>((set) => ({
     }),
 
   setActive: (id) => set({ activeJobId: id }),
+
+  setModelDownload: (id, payload) =>
+    set((s) =>
+      s.jobs[id]
+        ? { jobs: { ...s.jobs, [id]: { ...s.jobs[id], modelDownload: payload } } }
+        : s,
+    ),
 
   removeJob: (id) =>
     set((s) => {

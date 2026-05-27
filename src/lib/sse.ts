@@ -6,6 +6,7 @@ import { sidecarUrl } from "./sidecar";
 import type {
   DoneEvent,
   ErrorEvent as JobErrorEvent,
+  ModelDownloadEvent,
   ProgressEvent,
   SegmentEvent,
 } from "@/types/domain";
@@ -15,6 +16,8 @@ export interface JobStreamHandlers {
   onSegment?: (e: SegmentEvent) => void;
   onDone?: (e: DoneEvent) => void;
   onError?: (e: JobErrorEvent) => void;
+  /** Fires while huggingface_hub is downloading the model on first use. */
+  onModelDownload?: (e: ModelDownloadEvent) => void;
   /** Fires when the EventSource itself errors (connection loss). */
   onConnectionError?: (err: Event) => void;
 }
@@ -54,6 +57,12 @@ export function subscribeToJob(
     source.addEventListener("done", (raw: MessageEvent) => {
       const data = parse<DoneEvent>(raw);
       if (data) handlers.onDone?.(data);
+    });
+  }
+  if (handlers.onModelDownload) {
+    source.addEventListener("model_download", (raw: MessageEvent) => {
+      const data = parse<ModelDownloadEvent>(raw);
+      if (data) handlers.onModelDownload?.(data);
     });
   }
   if (handlers.onError) {

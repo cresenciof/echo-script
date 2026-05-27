@@ -41,6 +41,26 @@ export function formatSegmentTime(seconds: number): string {
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
 
+/**
+ * Format a byte count as a human-readable string using decimal (SI) units —
+ * matches the units `huggingface_hub` reports via tqdm so the UI numbers
+ * line up with what the server saw. "512 MB", "1.6 GB", "103 KB".
+ */
+export function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  let value = n;
+  while (value >= 1000 && i < units.length - 1) {
+    value /= 1000;
+    i += 1;
+  }
+  // 1 decimal once we're past KB so "1.6 GB" reads naturally; whole numbers
+  // for B/KB where fractional digits add noise.
+  const formatted = i >= 2 ? value.toFixed(1) : Math.round(value).toString();
+  return `${formatted} ${units[i]}`;
+}
+
 /** Estimated time remaining given elapsed wall time and progress. */
 export function estimateRemaining(
   elapsedMs: number,

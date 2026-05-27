@@ -28,10 +28,12 @@ import { WorkspaceView } from "./components/WorkspaceView";
 
 import { useShallow } from "zustand/react/shallow";
 
+import { isAcceptedMediaFile } from "./lib/audioFormats";
 import { useAudioStore } from "./state/useAudioStore";
 import { useHealth } from "./hooks/useHealth";
 import { useKeymap } from "./hooks/useKeymap";
 import { useModels } from "./hooks/useModels";
+import { useTauriDragDrop } from "./hooks/useTauriDragDrop";
 import { useTranscription } from "./hooks/useTranscription";
 import {
   selectActiveJob,
@@ -43,6 +45,12 @@ const DEFAULT_MODEL = "mlx-community/whisper-large-v3-turbo";
 
 function App() {
   const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL);
+  // Sidebar starts collapsed on narrow windows. After mount the user toggles
+  // it manually; we don't react to resize on the fly to avoid surprising them.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth < 1024;
+  });
   const { start } = useTranscription();
   const { data: health } = useHealth();
   const { data: models } = useModels();
@@ -107,6 +115,30 @@ function App() {
     [engineReady, selectedModel, start],
   );
 
+  // Native Tauri drag-drop. macOS hands us absolute filesystem paths; we
+  // filter to media files and route through the same `handlePick` so the
+  // overlay state + transcription pipeline stay identical to the file picker.
+  const handleNativeDrop = useCallback(
+    (paths: string[]) => {
+      const media = paths.filter(isAcceptedMediaFile);
+      if (media.length === 0) {
+        toast.error("Only audio or video files are supported.");
+        return;
+      }
+      const first = media[0];
+      const name = first.split(/[\\/]/).pop() ?? first;
+      void handlePick({ path: first, name });
+      if (media.length > 1) {
+        toast.message(`Only the first file (${name}) is being transcribed.`);
+      }
+    },
+    [handlePick],
+  );
+  const dragState = useTauriDragDrop({
+    onDrop: handleNativeDrop,
+    enabled: engineReady,
+  });
+
   const handleOpenFile = useCallback(async () => {
     try {
       const selected = await openDialog({
@@ -137,14 +169,23 @@ function App() {
           but never intercepts pointer events on interactive children, which
           opt out via `data-no-drag` or by being actual buttons / inputs. */}
       <DragStrip />
+      {/* Native Tauri drag overlay — shown while files are hovering over the
+          window (driven by the OS-level drag event, not HTML5). */}
+      <DragOverlay active={dragState === "over"} engineReady={engineReady} />
       {hasJobs ? (
         <>
           <Header
             selectedModel={selectedModel}
             onSelectModel={setSelectedModel}
+            sidebarCollapsed={sidebarCollapsed}
+            onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
           />
           <div className="flex min-h-0 flex-1">
-            <JobList onPick={handlePick} disabled={!engineReady} />
+            <JobList
+              onPick={handlePick}
+              disabled={!engineReady}
+              collapsed={sidebarCollapsed}
+            />
             {activeJob ? (
               <WorkspaceView job={activeJob} />
             ) : (
@@ -168,6 +209,39 @@ function App() {
           <StatusBar selectedModel={selectedModel} />
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Full-window overlay rendered when Tauri reports files being dragged over
+ * the app. Purely visual — the actual drop is handled by `useTauriDragDrop`
+ * one level up. `pointer-events-none` so the OS can keep delivering its drag
+ * events to us without the WebView swallowing them.
+ */
+function DragOverlay({
+  active,
+  engineReady,
+}: {
+  active: boolean;
+  engineReady: boolean;
+}) {
+  if (!active) return null;
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-background/80 backdrop-blur-sm"
+    >
+      <div
+        className="relative flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed border-primary/70 bg-card/40 px-12 py-10 text-center [box-shadow:0_0_0_6px_oklch(from_var(--primary)_l_c_h/0.18)]"
+      >
+        <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-primary">
+          Drop to transcribe
+        </div>
+        <div className="text-base font-medium text-foreground">
+          {engineReady ? "Release the file" : "Engine still starting…"}
+        </div>
+      </div>
     </div>
   );
 }

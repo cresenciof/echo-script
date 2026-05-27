@@ -11,13 +11,13 @@ import { FileAudio, Upload } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 
+import {
+  ACCEPT_MIME,
+  ACCEPTED_EXTENSIONS,
+} from "@/lib/audioFormats";
 import { cn } from "@/lib/utils";
 
-const ACCEPTED_EXT = ["m4a", "mp3", "wav", "mp4", "aac", "flac", "ogg", "aiff"];
-const ACCEPT_MIME: Record<string, string[]> = {
-  "audio/*": ACCEPTED_EXT.map((e) => `.${e}`),
-  "video/mp4": [".mp4"],
-};
+const ACCEPTED_EXT = [...ACCEPTED_EXTENSIONS];
 
 export interface DropzonePick {
   /** Best-known absolute path to the file (Tauri only). */
@@ -31,7 +31,7 @@ export interface DropzonePick {
 interface DropzoneProps {
   onPick: (pick: DropzonePick) => void;
   disabled?: boolean;
-  variant?: "expansive" | "compact";
+  variant?: "expansive" | "compact" | "rail";
 }
 
 function isTauriRuntime(): boolean {
@@ -56,7 +56,7 @@ export function Dropzone({ onPick, disabled, variant = "expansive" }: DropzonePr
         directory: false,
         title: "Choose an audio file",
         filters: [
-          { name: "Audio", extensions: ACCEPTED_EXT },
+          { name: "Audio & Video", extensions: ACCEPTED_EXT },
         ],
       });
       if (typeof selected === "string" && selected.length > 0) {
@@ -114,6 +114,21 @@ export function Dropzone({ onPick, disabled, variant = "expansive" }: DropzonePr
           aria-hidden
         />
         Add audio file
+      </button>
+    );
+  }
+
+  if (variant === "rail") {
+    return (
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={disabled || picking}
+        aria-label="Add another audio file"
+        title="Add audio or video file"
+        className="group inline-flex h-9 w-9 items-center justify-center rounded-md border border-dashed border-border bg-card/40 text-muted-foreground transition-colors hover:border-primary/50 hover:bg-accent/30 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+      >
+        <Upload className="h-3.5 w-3.5" aria-hidden />
       </button>
     );
   }

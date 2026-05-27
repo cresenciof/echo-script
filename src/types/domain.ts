@@ -75,6 +75,17 @@ export interface DoneEvent {
 export interface ErrorEvent {
   message: string;
 }
+/**
+ * Emitted while huggingface_hub downloads a model the first time it is used.
+ * `filename` may be an empty string when tqdm didn't set a description.
+ */
+export interface ModelDownloadEvent {
+  kind: "model_download";
+  filename: string;
+  downloaded_bytes: number;
+  total_bytes: number;
+  percent: number;
+}
 
 /**
  * UI-side job representation.
@@ -92,4 +103,10 @@ export interface UIJob extends JobDetail {
   total_s: number;
   /** Local timestamp (ms) when we observed status=running. */
   client_started_at: number | null;
+  /**
+   * Most recent model-download progress. Set while huggingface_hub is
+   * pulling the model and cleared once transcription actually starts
+   * (i.e. the first `segment` event arrives).
+   */
+  modelDownload?: ModelDownloadEvent | null;
 }

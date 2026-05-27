@@ -93,7 +93,13 @@ export function useTranscription() {
           audio_duration_s: total_s || null,
         });
       },
+      onModelDownload: (payload) => {
+        useJobsStore.getState().setModelDownload(serverJobId!, payload);
+      },
       onSegment: (segment) => {
+        // Clear any lingering download banner before appending — defensive,
+        // even though appendSegment already clears it on the first segment.
+        useJobsStore.getState().setModelDownload(serverJobId!, null);
         useJobsStore.getState().appendSegment(serverJobId!, segment);
         // Use the segment's end timestamp as the progress watermark when
         // the sidecar hasn't sent a fresh `progress` event yet.

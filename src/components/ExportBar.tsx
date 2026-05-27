@@ -6,12 +6,14 @@
  * download (handy in dev).
  */
 import { save } from "@tauri-apps/plugin-dialog";
-import { ClipboardCheck, Copy, Download, FileCode2 } from "lucide-react";
+import { ClipboardCheck, Copy, Download, FileCode2, Film } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { SubtitleExportDialog } from "@/components/SubtitleExportDialog";
 import { Button } from "@/components/ui/button";
 import { useExporter } from "@/hooks/useExporter";
+import { isVideoFile } from "@/lib/audioFormats";
 import { cn } from "@/lib/utils";
 import type { UIJob } from "@/types/domain";
 
@@ -58,7 +60,9 @@ function downloadBlob(filename: string, contents: string) {
 export function ExportBar({ job, editing, onToggleEdit }: ExportBarProps) {
   const exporter = useExporter(job);
   const [copied, setCopied] = useState(false);
+  const [subsOpen, setSubsOpen] = useState(false);
   const disabled = !exporter || job.status !== "done";
+  const isVideo = isVideoFile(job.audio_path);
 
   const baseName = job.filename.replace(/\.[^/.]+$/, "");
 
@@ -116,6 +120,21 @@ export function ExportBar({ job, editing, onToggleEdit }: ExportBarProps) {
             {fmt.label}
           </Button>
         ))}
+        {isVideo && (
+          <>
+            <span className="h-3 w-px bg-border" aria-hidden />
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={disabled}
+              onClick={() => setSubsOpen(true)}
+              className="h-7 gap-1.5 border-border bg-card px-2.5 font-mono text-[10.5px] uppercase tracking-wider"
+            >
+              <Film className="h-3 w-3" aria-hidden />
+              With subs
+            </Button>
+          </>
+        )}
       </div>
 
       <div className="flex items-center gap-1.5">
@@ -148,6 +167,14 @@ export function ExportBar({ job, editing, onToggleEdit }: ExportBarProps) {
           {copied ? "Copied" : "Copy all"}
         </Button>
       </div>
+
+      {isVideo && (
+        <SubtitleExportDialog
+          job={job}
+          open={subsOpen}
+          onOpenChange={setSubsOpen}
+        />
+      )}
     </div>
   );
 }

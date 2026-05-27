@@ -7,21 +7,50 @@
  * macOS traffic lights overlay this area (titleBarStyle: "Overlay"), so
  * we leave ~80px of left padding for them.
  */
-import { Waves } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, Waves } from "lucide-react";
 import { ModelPicker } from "./ModelPicker";
+import { cn } from "@/lib/utils";
 
 interface HeaderProps {
   selectedModel: string;
   onSelectModel: (id: string) => void;
+  sidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
 }
 
-export function Header({ selectedModel, onSelectModel }: HeaderProps) {
+export function Header({
+  selectedModel,
+  onSelectModel,
+  sidebarCollapsed,
+  onToggleSidebar,
+}: HeaderProps) {
   return (
     <header
       data-tauri-drag-region
       className="relative z-20 flex h-[52px] shrink-0 items-center justify-between border-b border-border bg-background/80 pl-[88px] pr-4 backdrop-blur-xl"
     >
       <div className="flex items-center gap-2.5" data-no-drag>
+        {onToggleSidebar && (
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            aria-label={
+              sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+            }
+            aria-pressed={sidebarCollapsed}
+            className={cn(
+              "mr-1 inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors",
+              "hover:bg-accent/40 hover:text-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            )}
+          >
+            {sidebarCollapsed ? (
+              <PanelLeftOpen className="h-4 w-4" aria-hidden />
+            ) : (
+              <PanelLeftClose className="h-4 w-4" aria-hidden />
+            )}
+          </button>
+        )}
         <div
           className="relative flex h-6 w-6 items-center justify-center rounded-md bg-primary/20 ring-1 ring-primary/50"
           style={{

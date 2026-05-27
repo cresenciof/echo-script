@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 
 import { AudioPlayer } from "./AudioPlayer";
 import { ExportBar } from "./ExportBar";
+import { ModelDownloadBanner } from "./ModelDownloadBanner";
 import { TranscriptEditor } from "./TranscriptEditor";
 import { TranscriptView } from "./TranscriptView";
 
@@ -88,6 +89,17 @@ function JobHeader({ job, modelLabel, running, percent }: JobHeaderProps) {
     job.client_started_at && running ? now - job.client_started_at : 0;
   const eta = estimateRemaining(elapsedMs, job.current_s, job.total_s);
 
+  // First-run UX: while huggingface_hub is downloading the model, REPLACE the
+  // "Transcribing" line with a distinct "Downloading model …" banner. We only
+  // trust the download phase until the very first segment arrives — once
+  // transcription has started, segment timestamps are a better progress
+  // signal than tqdm's download bar.
+  const isDownloading =
+    running &&
+    !!job.modelDownload &&
+    job.status === "running" &&
+    job.segments.length === 0;
+
   return (
     <header className="flex shrink-0 flex-col gap-3 border-b border-border bg-surface-elevated/40 px-6 pt-5 pb-4">
       <div className="flex items-start justify-between gap-4">
@@ -117,33 +129,38 @@ function JobHeader({ job, modelLabel, running, percent }: JobHeaderProps) {
         <StatusPill status={job.status} />
       </div>
 
-      {running && (
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-3 font-mono text-[11px] tabular text-muted-foreground">
-            <span className="text-foreground/90">
-              Transcribing
-              <span aria-hidden className="ml-1.5 inline-flex h-1 w-1 translate-y-[-1px] animate-pulse rounded-full bg-primary align-middle" />
-              <span aria-hidden className="ml-1 inline-flex h-1 w-1 translate-y-[-1px] animate-pulse rounded-full bg-primary/70 align-middle [animation-delay:180ms]" />
-              <span aria-hidden className="ml-1 inline-flex h-1 w-1 translate-y-[-1px] animate-pulse rounded-full bg-primary/40 align-middle [animation-delay:360ms]" />
-              <span className="ml-2 normal-case tracking-normal text-foreground">
-                {formatHMS(job.current_s)} of {formatHMS(job.total_s || 0)}
+      {isDownloading && job.modelDownload ? (
+        <ModelDownloadBanner modelLabel={modelLabel} payload={job.modelDownload} />
+      ) : (
+        running && (
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-3 font-mono text-[11px] tabular text-muted-foreground">
+              <span className="text-foreground/90">
+                Transcribing
+                <span aria-hidden className="ml-1.5 inline-flex h-1 w-1 translate-y-[-1px] animate-pulse rounded-full bg-primary align-middle" />
+                <span aria-hidden className="ml-1 inline-flex h-1 w-1 translate-y-[-1px] animate-pulse rounded-full bg-primary/70 align-middle [animation-delay:180ms]" />
+                <span aria-hidden className="ml-1 inline-flex h-1 w-1 translate-y-[-1px] animate-pulse rounded-full bg-primary/40 align-middle [animation-delay:360ms]" />
+                <span className="ml-2 normal-case tracking-normal text-foreground">
+                  {formatHMS(job.current_s)} of {formatHMS(job.total_s || 0)}
+                </span>
+                <span className="ml-2 text-primary">· {percent}%</span>
               </span>
-              <span className="ml-2 text-primary">· {percent}%</span>
-            </span>
-            <span>{eta !== null && <>ETA {formatHMS(eta)}</>}</span>
-          </div>
+              <span>{eta !== null && <>ETA {formatHMS(eta)}</>}</span>
+            </div>
 
-          <div className="relative h-[3px] overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
-              style={{ width: `${percent}%` }}
-            />
+            <div className="relative h-[3px] overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
+                style={{ width: `${percent}%` }}
+              />
+            </div>
           </div>
-        </div>
+        )
       )}
     </header>
   );
 }
+
 
 function StatusPill({ status }: { status: UIJob["status"] }) {
   const map = {
