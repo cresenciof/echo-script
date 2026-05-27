@@ -292,7 +292,7 @@ pub fn run() {
                         .message(format!(
                             "The transcription sidecar failed to start.\n\n{e}\n\nSee the terminal for details."
                         ))
-                        .title("Transcription Tool — sidecar error")
+                        .title("Echo Script — sidecar error")
                         .kind(MessageDialogKind::Error)
                         .blocking_show();
                     // Don't fail the setup — we still want the app window to

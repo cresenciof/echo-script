@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    transcription_tool_lib::run()
+    echo_script_lib::run()
 }

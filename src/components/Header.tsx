@@ -31,7 +31,7 @@ export function Header({ selectedModel, onSelectModel }: HeaderProps) {
         </div>
         <div className="flex items-baseline gap-2">
           <span className="text-[13px] font-semibold tracking-tight text-foreground">
-            Transcription
+            Echo Script
           </span>
           <span className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/70">
             v0.1

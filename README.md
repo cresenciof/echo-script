@@ -1,4 +1,4 @@
-# Transcription Tool
+# Echo Script
 
 > Native, offline audio transcription for Apple Silicon Macs. Drop a file, get a transcript. Nothing leaves your machine.
 
@@ -7,7 +7,7 @@
 <!-- Build status badge intentionally omitted until CI workflow is wired up. -->
 
 <!-- SCREENSHOT: drop a screenshot of the app at ./docs/screenshot.png and reference it here, e.g.:
-     ![Transcription Tool](./docs/screenshot.png)
+     ![Echo Script](./docs/screenshot.png)
      Suggested: a screenshot of the workspace view with a completed transcript and the audio player. -->
 
 ## What it is
@@ -30,12 +30,12 @@ It is **not** a cloud service. It is **not** cross-platform. It is **not** a rep
 > Pre-built downloads are published on the [Releases](https://github.com/cresenciof/echo-script/releases) page when available. If there is no release yet, build from source (see below).
 
 1. Download the latest `.dmg` from [Releases](https://github.com/cresenciof/echo-script/releases).
-2. Open the DMG and drag **Transcription Tool** into `/Applications`.
+2. Open the DMG and drag **Echo Script** into `/Applications`.
 3. First launch — the app is not signed with an Apple Developer ID, so macOS Gatekeeper will block it. Either:
    - **Right-click → Open**, confirm in the dialog. macOS remembers your choice.
    - Or, from the terminal:
      ```bash
-     xattr -dr com.apple.quarantine "/Applications/Transcription Tool.app"
+     xattr -dr com.apple.quarantine "/Applications/Echo Script.app"
      ```
 4. First transcription — the default model (`mlx-community/whisper-large-v3-turbo`, ~1.6 GB) downloads from Hugging Face into `~/.cache/huggingface/hub`. The app stays responsive but the first job will wait on the download. To pre-download:
    ```bash
@@ -133,7 +133,7 @@ Audio duration is determined via `ffprobe` if available, otherwise via `mlx_whis
 ### Project layout
 
 ```
-transcription-tool/
+echo-script/
 ├── src/                          # React + TS frontend
 │   ├── App.tsx                   # Routing between empty / working / result states
 │   ├── components/               # UI: Dropzone, ModelPicker, JobCard, TranscriptView, etc.

@@ -1,9 +1,9 @@
 [project]
 name = "whisper-sidecar"
 version = "0.1.0"
-description = "FastAPI sidecar that runs mlx-whisper for the Tauri transcription tool."
+description = "FastAPI sidecar that runs mlx-whisper for the Echo Script desktop app."
 authors = [
-    { name = "Transcription Tool contributors" }
+    { name = "Echo Script contributors" }
 ]
 requires-python = ">=3.12"
 dependencies = [
