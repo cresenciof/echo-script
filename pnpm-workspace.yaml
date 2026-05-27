@@ -1,0 +1,4 @@
+# pnpm 10 also reads `onlyBuiltDependencies` from this file (in addition to the
+# `pnpm` field in package.json). We keep both as belt + suspenders.
+onlyBuiltDependencies:
+  - esbuild

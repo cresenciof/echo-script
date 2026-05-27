@@ -75,7 +75,7 @@ jobs:
       - name: Set up pnpm (pinned)
         uses: pnpm/action-setup@f3d73ada1fa6e5c0c19973ff70a3f5cabf225cc5 # v6.0.0 (node24)
         with:
-          version: 10
+          version: 10.13.1
           run_install: false
 
       - name: Install uv (pinned, official action from Astral)
