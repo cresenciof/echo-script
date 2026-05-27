@@ -12,8 +12,8 @@ Thanks for your interest. This is a small, personal-first project — one mainta
 See the [README](./README.md#build-from-source-for-developers) for full setup. Short version:
 
 ```bash
-git clone https://github.com/cresenciof/transcription-tool.git
-cd transcription-tool
+git clone https://github.com/cresenciof/echo-script.git
+cd echo-script
 pnpm install
 cd python-sidecar && uv sync && cd ..
 pnpm tauri dev

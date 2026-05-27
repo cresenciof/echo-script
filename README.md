@@ -27,9 +27,9 @@ It is **not** a cloud service. It is **not** cross-platform. It is **not** a rep
 
 ## Install (for users)
 
-> Pre-built downloads are published on the [Releases](https://github.com/cresenciof/transcription-tool/releases) page when available. If there is no release yet, build from source (see below).
+> Pre-built downloads are published on the [Releases](https://github.com/cresenciof/echo-script/releases) page when available. If there is no release yet, build from source (see below).
 
-1. Download the latest `.dmg` from [Releases](https://github.com/cresenciof/transcription-tool/releases).
+1. Download the latest `.dmg` from [Releases](https://github.com/cresenciof/echo-script/releases).
 2. Open the DMG and drag **Transcription Tool** into `/Applications`.
 3. First launch — the app is not signed with an Apple Developer ID, so macOS Gatekeeper will block it. Either:
    - **Right-click → Open**, confirm in the dialog. macOS remembers your choice.
@@ -62,8 +62,8 @@ After installing Rust, run `source "$HOME/.cargo/env"` (or restart your shell) s
 ### Quick start
 
 ```bash
-git clone https://github.com/cresenciof/transcription-tool.git
-cd transcription-tool
+git clone https://github.com/cresenciof/echo-script.git
+cd echo-script
 pnpm install
 cd python-sidecar && uv sync && cd ..
 pnpm tauri dev

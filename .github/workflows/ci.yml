@@ -61,23 +61,10 @@ jobs:
           version: 9
           run_install: false
 
-      - name: Install uv with checksum verification (pinned)
-        env:
-          UV_VERSION: '0.5.11'
-        run: |
-          set -euo pipefail
-          curl --proto '=https' --tlsv1.2 -sSf \
-            "https://astral.sh/uv/${UV_VERSION}/install.sh" -o /tmp/uv-install.sh
-          curl --proto '=https' --tlsv1.2 -sSf \
-            "https://astral.sh/uv/${UV_VERSION}/install.sh.sha256" -o /tmp/uv-install.sh.sha256
-          expected="$(awk '{print $1}' /tmp/uv-install.sh.sha256)"
-          actual="$(shasum -a 256 /tmp/uv-install.sh | awk '{print $1}')"
-          if [[ "${expected}" != "${actual}" ]]; then
-            echo "::error::uv installer checksum mismatch (expected=${expected} actual=${actual})" >&2
-            exit 1
-          fi
-          sh /tmp/uv-install.sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install uv (pinned, official action from Astral)
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
 
       - name: Install Node dependencies (frozen)
         run: pnpm install --frozen-lockfile

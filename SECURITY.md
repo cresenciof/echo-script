@@ -4,7 +4,7 @@
 
 Please do **not** open a public GitHub issue for security reports.
 
-Instead, use GitHub's [private vulnerability reporting](https://github.com/cresenciof/transcription-tool/security/advisories/new) form on this repository. If that is unavailable, contact the maintainer via `<your-email-or-a-github-form>`.
+Instead, use GitHub's [private vulnerability reporting](https://github.com/cresenciof/echo-script/security/advisories/new) form on this repository. If that is unavailable, contact the maintainer via `<your-email-or-a-github-form>`.
 
 Include, when possible:
 - A description of the issue and its impact.
