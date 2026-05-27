@@ -3,7 +3,7 @@ name = "whisper-sidecar"
 version = "0.1.0"
 description = "FastAPI sidecar that runs mlx-whisper for the Tauri transcription tool."
 authors = [
-    { name = "Cresencio Vázquez Flores", email = "cresenciofl@icloud.com" }
+    { name = "Transcription Tool contributors" }
 ]
 requires-python = ">=3.12"
 dependencies = [

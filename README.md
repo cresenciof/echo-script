@@ -1,23 +1,83 @@
 # Transcription Tool
 
-A native macOS desktop app for offline audio transcription on Apple Silicon, powered by [`mlx-whisper`](https://github.com/ml-explore/mlx-examples/tree/main/whisper). Drop an audio file, watch it transcribe in real time, edit, and export. Nothing leaves your Mac.
+> Native, offline audio transcription for Apple Silicon Macs. Drop a file, get a transcript. Nothing leaves your machine.
 
-Built with Tauri 2 (Rust shell), React 19 + TypeScript + Vite + Tailwind v4 (frontend), and a Python FastAPI sidecar that runs `mlx-whisper` in a worker thread and streams progress over Server-Sent Events.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+![Platform: macOS Apple Silicon](https://img.shields.io/badge/platform-macOS%20%7C%20Apple%20Silicon-blue)
+<!-- Build status badge intentionally omitted until CI workflow is wired up. -->
 
----
+<!-- SCREENSHOT: drop a screenshot of the app at ./docs/screenshot.png and reference it here, e.g.:
+     ![Transcription Tool](./docs/screenshot.png)
+     Suggested: a screenshot of the workspace view with a completed transcript and the audio player. -->
+
+## What it is
+
+A small desktop app that runs OpenAI Whisper locally on your Mac using Apple's [MLX](https://github.com/ml-explore/mlx) framework via [`mlx-whisper`](https://github.com/ml-explore/mlx-examples/tree/main/whisper). You drop in an audio file, it transcribes on-device, and you can edit and export the result.
+
+It is **not** a cloud service. It is **not** cross-platform. It is **not** a replacement for a hosted transcription service if you need diarization, real-time meeting capture, or multi-user collaboration. It is for one person, on one Mac, who wants their audio to stay on that Mac.
 
 ## Features
 
-- **Native macOS app** — Tauri shell, WKWebView, ~15 MB bundle + Python venv
-- **Apple Silicon only** — uses MLX (no fallback; this is by design)
-- **Live transcription progress** — segments stream in as they're decoded
-- **Multiple Whisper models** — `large-v3-turbo` (default), `large-v3`, `large-v3-mlx-4bit`, `medium`, `small`
-- **Export to** TXT, SRT, VTT, Markdown
-- **Editable transcript** — fix recognition errors before exporting
-- **In-browser audio player** — click any segment to seek
-- **Dark mode by design** — single accent (amber), Geist Sans + Geist Mono typography
+- Native macOS app — Tauri shell, WKWebView, small footprint
+- Live transcription progress — segments stream in as they're decoded
+- Multiple Whisper models (large-v3-turbo by default; smaller and quantized variants available)
+- Export to TXT, SRT, VTT, Markdown
+- Editable transcript with click-to-seek audio player
+- Dark mode by design
 
----
+## Install (for users)
+
+> Pre-built downloads are published on the [Releases](https://github.com/cresenciof/transcription-tool/releases) page when available. If there is no release yet, build from source (see below).
+
+1. Download the latest `.dmg` from [Releases](https://github.com/cresenciof/transcription-tool/releases).
+2. Open the DMG and drag **Transcription Tool** into `/Applications`.
+3. First launch — the app is not signed with an Apple Developer ID, so macOS Gatekeeper will block it. Either:
+   - **Right-click → Open**, confirm in the dialog. macOS remembers your choice.
+   - Or, from the terminal:
+     ```bash
+     xattr -dr com.apple.quarantine "/Applications/Transcription Tool.app"
+     ```
+4. First transcription — the default model (`mlx-community/whisper-large-v3-turbo`, ~1.6 GB) downloads from Hugging Face into `~/.cache/huggingface/hub`. The app stays responsive but the first job will wait on the download. To pre-download:
+   ```bash
+   pip install huggingface_hub
+   python -c "from huggingface_hub import snapshot_download; snapshot_download('mlx-community/whisper-large-v3-turbo')"
+   ```
+
+## Build from source (for developers)
+
+### Prerequisites
+
+| Tool      | Minimum | Install                                                                       |
+| --------- | ------- | ----------------------------------------------------------------------------- |
+| macOS     | 13+     | Apple Silicon only (M1/M2/M3/M4). MLX has no Intel path.                       |
+| Xcode CLT | current | `xcode-select --install`                                                       |
+| Rust      | 1.78+   | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh -s -- -y`     |
+| Node.js   | 20+     | `brew install node` (or use `nvm`/`fnm`/Volta)                                 |
+| pnpm      | 9+      | `corepack enable && corepack prepare pnpm@latest --activate`                   |
+| uv        | latest  | `curl -LsSf https://astral.sh/uv/install.sh \| sh`                             |
+| ffmpeg    | optional| `brew install ffmpeg` (only needed for accurate audio-duration progress %)     |
+
+After installing Rust, run `source "$HOME/.cargo/env"` (or restart your shell) so `cargo` is on PATH.
+
+### Quick start
+
+```bash
+git clone https://github.com/cresenciof/transcription-tool.git
+cd transcription-tool
+pnpm install
+cd python-sidecar && uv sync && cd ..
+pnpm tauri dev
+```
+
+The first `pnpm tauri dev` takes a few minutes — Rust compiles the entire dependency tree. After that, incremental rebuilds are seconds.
+
+### Building a distributable
+
+```bash
+pnpm tauri build
+```
+
+Output is in `src-tauri/target/release/bundle/`. The `.app` is unsigned; users will need the Gatekeeper workaround documented above.
 
 ## Architecture
 
@@ -53,104 +113,53 @@ Built with Tauri 2 (Rust shell), React 19 + TypeScript + Vite + Tailwind v4 (fro
 
 The port handshake is `SIDECAR_READY <port>\n`, printed to stdout exactly once before any other output and flushed immediately. Tauri reads this line on a dedicated thread and routes it back to the main thread via a `sync_channel(1)` with a 10-second timeout.
 
----
+### Port handshake
 
-## Prerequisites
+Python (`python-sidecar/src/whisper_sidecar/__main__.py`) pre-binds a socket on port 0, reads the OS-assigned port, prints `SIDECAR_READY <port>\n` to stdout, flushes, then hands the bound socket to uvicorn via `server.run(sockets=[sock])`. This eliminates the race window where the line could be printed before the port is actually listening.
 
-This project assumes macOS on Apple Silicon. The toolchain is:
+Rust (`src-tauri/src/lib.rs`) spawns `uv run python -m whisper_sidecar --port 0`, reads stdout on a dedicated thread, parses the line, and delivers the port back to the setup hook via `sync_channel(1)` with `recv_timeout(Duration::from_secs(10))`.
 
-| Tool     | Minimum | Install                                                                          |
-| -------- | ------- | -------------------------------------------------------------------------------- |
-| Rust     | 1.78+   | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh -s -- -y`       |
-| Node.js  | 20+     | `nvm install 22 && nvm use 22` (or via Homebrew: `brew install node`)            |
-| pnpm     | 9+      | `corepack enable && corepack prepare pnpm@latest --activate`                     |
-| uv       | latest  | `curl -LsSf https://astral.sh/uv/install.sh \| sh`                               |
-| Xcode CLT| current | `xcode-select --install`                                                         |
-| ffmpeg   | optional| `brew install ffmpeg` (only needed if you want audio-duration progress %)        |
+### Progress streaming
 
-After installing Rust, make sure your shell sources `$HOME/.cargo/env`. Restart your terminal or run `source "$HOME/.cargo/env"` once.
+`mlx-whisper` doesn't expose progress callbacks. The sidecar's `transcriber.py` temporarily redirects `sys.stdout` for the duration of the `mlx_whisper.transcribe(..., verbose=True)` call to a custom file-like object that:
 
----
+1. Parses lines matching `[mm:ss.SSS --> mm:ss.SSS] text` via regex
+2. Pushes parsed segments onto a `queue.Queue`
+3. Bridges to the asyncio event loop via `loop.call_soon_threadsafe(...)`
+4. SSE generator drains the asyncio queue and fans events out to all subscribers
 
-## Quick start
+Audio duration is determined via `ffprobe` if available, otherwise via `mlx_whisper.audio.load_audio` (slower, loads the whole file). Progress percent = `current_end_timestamp / total_duration`.
 
-```bash
-# 1. Clone (or you're already here)
-cd /Users/cresenciof/Development/personal/transcription-tool
-
-# 2. Install frontend deps
-pnpm install
-
-# 3. Install sidecar deps (creates python-sidecar/.venv)
-cd python-sidecar
-uv sync
-cd ..
-
-# 4. First run will download the default Whisper model (~1.6 GB)
-#    to ~/.cache/huggingface/hub. Subsequent runs are instant.
-source "$HOME/.cargo/env"
-pnpm tauri dev
-```
-
-The first launch of `pnpm tauri dev` may take ~5 minutes (Rust compiles the entire dependency tree). Subsequent launches are seconds.
-
----
-
-## Project structure
+### Project layout
 
 ```
 transcription-tool/
 ├── src/                          # React + TS frontend
 │   ├── App.tsx                   # Routing between empty / working / result states
-│   ├── components/
-│   │   ├── Dropzone.tsx          # react-dropzone wrapper, accepts audio
-│   │   ├── ModelPicker.tsx       # model catalog with "installed" tags
-│   │   ├── JobCard.tsx           # one job: status, progress, ETA
-│   │   ├── JobList.tsx           # sidebar list of recent jobs
-│   │   ├── TranscriptView.tsx    # segment list with timestamps
-│   │   ├── TranscriptEditor.tsx  # edit mode for segments
-│   │   ├── AudioPlayer.tsx       # HTML5 audio with seek-from-segment
-│   │   ├── ExportBar.tsx         # TXT / SRT / VTT / MD exports
-│   │   ├── EmptyState.tsx        # first-run / no-jobs UI
-│   │   ├── Header.tsx, StatusBar.tsx, WorkspaceView.tsx
-│   │   └── ui/                   # shadcn primitives (button, card, …)
+│   ├── components/               # UI: Dropzone, ModelPicker, JobCard, TranscriptView, etc.
 │   ├── hooks/                    # useModels, useTranscription, useExporter, useHealth, useKeymap
-│   ├── lib/                      # api.ts (HTTP client), sse.ts (EventSource wrapper), sidecar.ts (URL resolver), timeFormat.ts
-│   ├── state/                    # useJobsStore, useAudioStore (Zustand)
+│   ├── lib/                      # api.ts, sse.ts, sidecar.ts, timeFormat.ts
+│   ├── state/                    # Zustand stores
 │   ├── styles.css                # Tailwind v4 + oklch design tokens
-│   └── types/                    # domain.ts, global.d.ts
+│   └── types/
 ├── src-tauri/                    # Tauri Rust shell
-│   ├── src/lib.rs                # Sidecar spawn, port handshake, webview injection, cleanup
-│   ├── tauri.conf.json           # window config, CSP allowing http://127.0.0.1:*
+│   ├── src/lib.rs                # Sidecar spawn, port handshake, webview injection
+│   ├── tauri.conf.json
 │   └── Cargo.toml
 ├── python-sidecar/               # FastAPI + mlx-whisper
 │   ├── src/whisper_sidecar/
-│   │   ├── __main__.py           # CLI entrypoint, port pre-bind, SIDECAR_READY handshake
-│   │   ├── app.py                # FastAPI app, CORS, routes, SSE
-│   │   ├── transcriber.py        # Worker thread, stdout segment parser
-│   │   ├── jobs.py               # JobRegistry with pub/sub fan-out
-│   │   ├── hf_cache.py           # Scans ~/.cache/huggingface/hub for installed models
-│   │   ├── audio.py              # ffprobe + fallback for duration
-│   │   ├── config.py             # Model catalog
-│   │   └── models.py             # Pydantic schemas
-│   ├── tests/                    # 10 tests covering parser + registry
+│   ├── tests/
 │   ├── pyproject.toml
 │   └── start.sh
-└── README.md (this file)
+├── LICENSE
+├── SECURITY.md
+├── CONTRIBUTING.md
+└── README.md
 ```
 
----
+### Running pieces in isolation
 
-## Development workflow
-
-### Run the whole app
-
-```bash
-source "$HOME/.cargo/env"
-pnpm tauri dev
-```
-
-### Run sidecar standalone (for debugging)
+Run the sidecar standalone (for debugging):
 
 ```bash
 cd python-sidecar
@@ -170,20 +179,20 @@ curl -X POST http://127.0.0.1:$PORT/transcribe \
 curl -N http://127.0.0.1:$PORT/jobs/<job_id>/stream
 ```
 
-### Run frontend standalone (without Tauri)
+Run the frontend standalone (without Tauri):
 
 ```bash
 pnpm dev
 ```
 
-Vite serves on `http://localhost:1420`. The frontend will detect that `window.__SIDECAR_URL__` is undefined and fall back to `http://127.0.0.1:8765`. Override by running the sidecar on that port:
+Vite serves on `http://localhost:1420`. With `window.__SIDECAR_URL__` undefined, it falls back to `http://127.0.0.1:8765` — point the sidecar there:
 
 ```bash
 cd python-sidecar
 PORT=8765 uv run python -m whisper_sidecar
 ```
 
-### Type-check / lint
+### Type-check / lint / test
 
 ```bash
 pnpm exec tsc --noEmit
@@ -191,22 +200,9 @@ cargo check --manifest-path src-tauri/Cargo.toml
 cd python-sidecar && uv run pytest -q
 ```
 
-### Build for distribution (unsigned, personal use)
-
-```bash
-source "$HOME/.cargo/env"
-pnpm tauri build
-```
-
-Output lands in `src-tauri/target/release/bundle/`. The `.app` is unsigned — Gatekeeper will warn on first run. Right-click → Open the first time, or run `xattr -dr com.apple.quarantine path/to/Transcription Tool.app`.
-
-> **Bundled-mode caveat**: the Rust sidecar spawn currently resolves `python-sidecar/` relative to the development project root. For a true distributable build, the `python-sidecar/` venv needs to be shipped as a resource and the path resolved via `app.path().resource_dir()`. This is marked as `TODO(bundled-mode)` in `src-tauri/src/lib.rs`. Personal-use dev mode works without it.
-
----
-
 ## Models
 
-All models are MLX-converted variants from the `mlx-community` Hugging Face org. The first time you select a model, `mlx-whisper` downloads it to `~/.cache/huggingface/hub`. Disk usage:
+All models are public, MLX-converted variants from the [`mlx-community`](https://huggingface.co/mlx-community) Hugging Face organization. The first time you select a model, `mlx-whisper` downloads it to `~/.cache/huggingface/hub`.
 
 | Model                                       | Size    | When to use                                  |
 | ------------------------------------------- | ------- | -------------------------------------------- |
@@ -216,14 +212,12 @@ All models are MLX-converted variants from the `mlx-community` Hugging Face org.
 | `mlx-community/whisper-medium-mlx`          | ~1.5 GB | Balanced.                                    |
 | `mlx-community/whisper-small-mlx`           | ~0.5 GB | Fast. Use only with clean audio.             |
 
-To pre-download a model from the terminal (skips the in-app download wait):
+Pre-download a model from the terminal (skips the in-app wait):
 
 ```bash
 cd python-sidecar
 uv run python -c "from huggingface_hub import snapshot_download; snapshot_download('mlx-community/whisper-large-v3-turbo')"
 ```
-
----
 
 ## Troubleshooting
 
@@ -231,9 +225,9 @@ uv run python -c "from huggingface_hub import snapshot_download; snapshot_downlo
 
 The Tauri Rust shell waits 10 seconds for the sidecar to bind a port. If the sidecar fails to start, check the dev console (View → Developer → Open Web Inspector) and the terminal stderr. Common causes:
 
-- `uv` not on the search paths Tauri probes. The Rust shell looks in `/Users/cresenciof/pyenv/bin/uv`, `~/.local/bin/uv`, `~/.cargo/bin/uv`, `/opt/homebrew/bin/uv`, `/usr/local/bin/uv` in that order. Symlink or install `uv` to one of those.
+- `uv` not on the search paths Tauri probes. The Rust shell looks in `~/.local/bin/uv`, `~/.cargo/bin/uv`, `/opt/homebrew/bin/uv`, `/usr/local/bin/uv` in that order. Symlink or install `uv` to one of those.
 - `python-sidecar/.venv` missing → `cd python-sidecar && uv sync`.
-- Model download in progress on first run → just wait, or pre-download (see above).
+- Model download in progress on first run → wait, or pre-download (see [Models](#models)).
 
 ### "Repository Not Found for url: https://huggingface.co/api/models/large-v3/..."
 
@@ -247,50 +241,34 @@ You're passing the wrong model identifier. `mlx-whisper` does **NOT** accept sho
 
 ### `pnpm tauri dev` rebuilds Rust forever
 
-The first compile is ~3–5 min. After that it's incremental. If you ever see a full recompile, you probably edited a `Cargo.toml`.
-
-### My Python global venv got wrecked
-
-If your default Python or `~/pyenv` venv was a venv (not the `pyenv` version manager), running `uv run --active ...` while that venv was activated can recreate it with the sidecar's dependencies. **Never use `--active` outside of the project directory.** The sidecar's `start.sh` and the Tauri spawn intentionally avoid `--active`.
-
----
-
-## How it works under the hood
-
-### Port handshake
-
-Python (`python-sidecar/src/whisper_sidecar/__main__.py`) pre-binds a socket on port 0, reads the OS-assigned port, prints `SIDECAR_READY <port>\n` to stdout, flushes, then hands the bound socket to uvicorn via `server.run(sockets=[sock])`. This eliminates the race window where the line could be printed before the port is actually listening.
-
-Rust (`src-tauri/src/lib.rs`) spawns `uv run python -m whisper_sidecar --port 0`, reads stdout on a dedicated thread, parses the line, and delivers the port back to the setup hook via `sync_channel(1)` with `recv_timeout(Duration::from_secs(10))`.
-
-### Progress streaming
-
-`mlx-whisper` doesn't expose progress callbacks. The sidecar's `transcriber.py` temporarily redirects `sys.stdout` for the duration of the `mlx_whisper.transcribe(..., verbose=True)` call to a custom file-like object that:
-
-1. Parses lines matching `[mm:ss.SSS --> mm:ss.SSS] text` via regex
-2. Pushes parsed segments onto a `queue.Queue`
-3. Bridges to the asyncio event loop via `loop.call_soon_threadsafe(...)`
-4. SSE generator drains the asyncio queue and fans events out to all subscribers
-
-Audio duration is determined via `ffprobe` if available, otherwise via `mlx_whisper.audio.load_audio` (slower, loads the whole file). Progress percent = `current_end_timestamp / total_duration`.
-
-### Export
-
-The frontend builds the export string (TXT/SRT/VTT/MD) entirely in the client. The Tauri save dialog (`@tauri-apps/plugin-dialog`) returns a path; for personal-use dev mode without `@tauri-apps/plugin-fs`, the export uses a Blob download triggered by an `<a download>` tag. The browser drops it in `~/Downloads`. To write to an arbitrary user-chosen folder, add a `write_file` Tauri command and wire `plugin-fs`. See `src/components/ExportBar.tsx` for the current implementation.
-
----
+The first compile is ~3–5 min. After that it's incremental. A full recompile usually means a `Cargo.toml` changed.
 
 ## Known limitations
 
 - **macOS Apple Silicon only.** MLX has no Intel or non-Apple GPU support. No fallback path is planned.
-- **No queue with parallelism.** MLX is GPU-bound; running multiple jobs in parallel saturates the same hardware. The UI processes one job at a time.
-- **No speaker diarization.** Requires a second model (`pyannote.audio`) and a different pipeline. Out of scope for this MVP.
-- **No persistence.** Job history is in-memory in the Python sidecar; closing the app loses it.
-- **No code signing.** Personal use only. To distribute to others, add Apple Developer ID signing and notarization to `tauri.conf.json`.
-- **Single SSE subscriber per job assumed in most flows.** The sidecar implements multi-subscriber fan-out + replay buffer, but the frontend only subscribes from the currently-focused job card.
+- **No parallel jobs.** MLX is GPU-bound; running multiple jobs in parallel saturates the same hardware. The UI processes one job at a time.
+- **No speaker diarization.** Out of scope for the MVP.
+- **No persistence.** Job history is in-memory in the sidecar; closing the app loses it.
+- **No code signing.** The `.app` is unsigned. End users hit Gatekeeper on first launch.
+- **Single SSE subscriber per job in practice.** The sidecar supports multi-subscriber fan-out + replay, but the frontend only subscribes from the focused job card.
 
----
+## Contributing
+
+PRs are welcome, but this is a small personal-first project — please open an issue first for anything beyond a typo or obvious bug fix. See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, commit style, and pre-flight checks.
+
+## Acknowledgments
+
+This project would not exist without:
+
+- [`mlx-whisper`](https://github.com/ml-explore/mlx-examples/tree/main/whisper) and Apple's [MLX](https://github.com/ml-explore/mlx) framework
+- The [`mlx-community`](https://huggingface.co/mlx-community) Hugging Face org for the MLX-converted Whisper models
+- [Tauri](https://tauri.app/), [React](https://react.dev/), [Vite](https://vitejs.dev/), [Tailwind CSS](https://tailwindcss.com/), [shadcn/ui](https://ui.shadcn.com/), [Zustand](https://github.com/pmndrs/zustand), [TanStack Query](https://tanstack.com/query)
+- [FastAPI](https://fastapi.tiangolo.com/), [sse-starlette](https://github.com/sysid/sse-starlette), [uv](https://github.com/astral-sh/uv)
 
 ## License
 
-Personal use. No license file. If you fork it, do whatever — just don't blame me.
+[MIT](./LICENSE).
+
+## Security
+
+If you find a vulnerability, please **do not** open a public issue. See [SECURITY.md](./SECURITY.md) for the disclosure process.

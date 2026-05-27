@@ -25,7 +25,7 @@ use std::sync::mpsc::sync_channel;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use tauri::{Manager, RunEvent, State, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
 
 /// Managed state holding the resolved sidecar URL and the live child process.
 struct SidecarState {
@@ -60,36 +60,57 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-/// Resolve `<project-root>/python-sidecar` for dev mode by walking up from the
-/// current working directory until we find a folder containing it.
+/// Resolve the sidecar directory, branching on dev vs bundled.
 ///
-/// TODO(bundled-mode): In a packaged build the sidecar lives next to the app
-/// resources. Resolve it via `app.path().resource_dir()?.join("python-sidecar")`
-/// and ship the venv (or a PyInstaller binary) alongside.
-fn resolve_sidecar_dir() -> Result<PathBuf, String> {
-    let cwd = std::env::current_dir().map_err(|e| format!("cwd unavailable: {e}"))?;
-    for ancestor in cwd.ancestors() {
-        let candidate = ancestor.join("python-sidecar");
-        if candidate.join("pyproject.toml").exists() {
-            return Ok(candidate);
+/// - Dev (`debug_assertions`): walk up from cwd until we find `python-sidecar/`
+///   with a `pyproject.toml`. The bundled venv may not even exist yet.
+/// - Release: read from the Tauri resource dir, which is populated from the
+///   `bundle.resources` entry in `tauri.conf.json`. The path inside the .app
+///   is `Contents/Resources/python-sidecar/`.
+fn resolve_sidecar_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    if cfg!(debug_assertions) {
+        let cwd = std::env::current_dir().map_err(|e| format!("cwd unavailable: {e}"))?;
+        for ancestor in cwd.ancestors() {
+            let candidate = ancestor.join("python-sidecar");
+            if candidate.join("pyproject.toml").exists() {
+                return Ok(candidate);
+            }
         }
+        return Err(format!(
+            "python-sidecar/ not found relative to {}",
+            cwd.display()
+        ));
     }
-    Err(format!(
-        "python-sidecar/ not found relative to {}",
-        cwd.display()
-    ))
+
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("resource_dir unavailable: {e}"))?;
+    let candidate = resource_dir.join("python-sidecar");
+    if !candidate.exists() {
+        return Err(format!(
+            "bundled python-sidecar not found at {}",
+            candidate.display()
+        ));
+    }
+    Ok(candidate)
 }
 
 /// Locate the `uv` binary. Tauri apps do NOT inherit the user's interactive
 /// shell `PATH`, so a bare `uv` lookup typically fails. We probe a list of
 /// common install locations and return the first existing one.
 ///
-/// Order matters — we prefer the user's pyenv-installed `uv` (where the
-/// project's tooling lives), then fall back to standard locations.
+/// Order: the official `uv` installer drops the binary in `~/.local/bin`, so
+/// we check that first; then a Cargo-installed `uv` (`~/.cargo/bin`); then
+/// the two Homebrew prefixes (Apple Silicon, then Intel/generic).
+///
+/// Only needed in dev mode — release builds invoke the bundled venv's python
+/// directly. `cfg(debug_assertions)` keeps the function out of release binaries
+/// and silences the dead-code warning.
+#[cfg(debug_assertions)]
 fn locate_uv() -> Result<PathBuf, String> {
     let home = std::env::var("HOME").unwrap_or_default();
     let candidates = [
-        PathBuf::from("/Users/cresenciof/pyenv/bin/uv"),
         PathBuf::from(format!("{home}/.local/bin/uv")),
         PathBuf::from(format!("{home}/.cargo/bin/uv")),
         PathBuf::from("/opt/homebrew/bin/uv"),
@@ -112,19 +133,55 @@ fn locate_uv() -> Result<PathBuf, String> {
 
 /// Spawn the sidecar, parse the `SIDECAR_READY <port>` handshake line, and
 /// return the live `Child` plus the resolved `http://127.0.0.1:<port>` URL.
-fn spawn_sidecar() -> Result<(Child, String), String> {
-    let uv = locate_uv()?;
-    let sidecar_dir = resolve_sidecar_dir()?;
+///
+/// Dev: invokes `uv run python -m whisper_sidecar` against the project's dev
+/// venv. Release: invokes the bundled venv's python directly with PYTHONPATH
+/// pointing at the bundled whisper_sidecar package — `uv` is not required on
+/// the user's machine.
+fn spawn_sidecar(app: &AppHandle) -> Result<(Child, String), String> {
+    let sidecar_dir = resolve_sidecar_dir(app)?;
 
-    let mut child = Command::new(&uv)
-        .args(["run", "python", "-m", "whisper_sidecar", "--port", "0"])
-        .current_dir(&sidecar_dir)
+    // The dev/release branches reference different symbols (`locate_uv` is
+    // dev-only), so we gate them with `#[cfg]` instead of `cfg!()` — the
+    // latter is a runtime expression and would still try to type-check
+    // `locate_uv()` in release mode where it doesn't exist.
+    #[cfg(debug_assertions)]
+    let mut command = {
+        let uv = locate_uv()?;
+        let mut c = Command::new(&uv);
+        c.args(["run", "python", "-m", "whisper_sidecar", "--port", "0"])
+            .current_dir(&sidecar_dir);
+        c
+    };
+
+    #[cfg(not(debug_assertions))]
+    let mut command = {
+        // Bundled: <resource>/python-sidecar/.venv-bundle/bin/python and
+        // PYTHONPATH=<resource>/python-sidecar/src so the package is importable
+        // without depending on an editable install (which would carry an
+        // absolute path baked at build time and defeat relocation).
+        let python = sidecar_dir.join(".venv-bundle/bin/python");
+        if !python.exists() {
+            return Err(format!(
+                "bundled python interpreter missing at {}",
+                python.display()
+            ));
+        }
+        let pkg_root = sidecar_dir.join("src");
+        let mut c = Command::new(&python);
+        c.args(["-m", "whisper_sidecar", "--port", "0"])
+            .current_dir(&sidecar_dir)
+            .env("PYTHONPATH", &pkg_root);
+        c
+    };
+
+    let mut child = command
         .stdout(Stdio::piped())
         // Surface Python tracebacks / uvicorn logs in the parent's stderr so
         // dev mode shows them in the terminal that launched `tauri dev`.
         .stderr(Stdio::inherit())
         .spawn()
-        .map_err(|e| format!("failed to spawn `{} run python -m whisper_sidecar`: {e}", uv.display()))?;
+        .map_err(|e| format!("failed to spawn whisper_sidecar: {e}"))?;
 
     let stdout = child
         .stdout
@@ -199,8 +256,9 @@ pub fn run() {
         .manage(SidecarState::new())
         .setup(|app| {
             let state: State<'_, SidecarState> = app.state();
+            let app_handle = app.handle().clone();
 
-            match spawn_sidecar() {
+            match spawn_sidecar(&app_handle) {
                 Ok((child, url)) => {
                     eprintln!("[sidecar] ready at {url}");
 

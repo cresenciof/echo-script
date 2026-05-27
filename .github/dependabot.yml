@@ -1,0 +1,79 @@
+# Dependabot configuration.
+#
+# Why this matters for a SHA-pinned workflow setup:
+#   The `github-actions` ecosystem below is CRITICAL. Because every action in
+#   release.yml / ci.yml is pinned to a commit SHA, Dependabot is the
+#   mechanism that bumps those SHAs when upstream actions cut a new release.
+#   Without it, our pins silently rot.
+#
+# All ecosystems use the `chore(deps):` commit prefix so dependency churn does
+# not pollute the user-facing changelog, and group minor + patch updates per
+# ecosystem to keep PR volume manageable.
+
+version: 2
+updates:
+  # -----------------------------------------------------------------------
+  # GitHub Actions — bumps SHAs for actions/* and third-party actions used
+  # in .github/workflows/*.yml. KEEP THIS ENABLED.
+  # -----------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # -----------------------------------------------------------------------
+  # npm — root package.json (Vite + React + Tailwind + Tauri JS API).
+  # -----------------------------------------------------------------------
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      npm-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # -----------------------------------------------------------------------
+  # Cargo — Tauri 2 Rust shell.
+  # -----------------------------------------------------------------------
+  - package-ecosystem: "cargo"
+    directory: "/src-tauri"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # -----------------------------------------------------------------------
+  # Python — FastAPI sidecar managed via uv / pyproject.toml.
+  # Dependabot's `pip` ecosystem reads pyproject.toml directly.
+  # -----------------------------------------------------------------------
+  - package-ecosystem: "pip"
+    directory: "/python-sidecar"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      pip-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"

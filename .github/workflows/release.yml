@@ -1,0 +1,163 @@
+# Release workflow — builds and publishes a signed DMG when a semver tag is pushed.
+#
+# Hardening notes:
+# - Every third-party action is pinned to a full commit SHA, with the
+#   human-readable version recorded in the trailing comment so a maintainer can
+#   cross-check on GitHub (https://github.com/<owner>/<repo>/releases) and so
+#   Dependabot can propose SHA bumps over time.
+# - Default token permissions are read-only; we escalate to `contents: write`
+#   only on the release-publishing step.
+# - Tag format is validated as the first step — a malformed tag aborts the run
+#   before any build work runs.
+# - All package managers run with their respective frozen-lockfile flags so we
+#   build exactly what the lockfiles describe.
+# - No secrets are referenced other than the auto-managed GITHUB_TOKEN.
+#   Notarization / Apple signing is intentionally NOT wired up yet — see TODOs.
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+# Default to least privilege. Individual steps re-declare what they need.
+permissions:
+  contents: read
+
+concurrency:
+  # Allow concurrent releases (one per tag) — never cancel an in-flight publish.
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish macOS arm64 DMG
+    runs-on: macos-14
+    # Job-level permissions remain read-only; we elevate per-step below.
+    permissions:
+      contents: read
+    timeout-minutes: 60
+
+    steps:
+      - name: Validate semver tag (v<major>.<minor>.<patch>)
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '${tag}' is not strict semver vMAJOR.MINOR.PATCH — refusing to build." >&2
+            exit 1
+          fi
+          echo "Tag ${tag} validated."
+
+      - name: Checkout source (pinned)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Explicitly do NOT pass `ref` — checkout the exact commit the tag
+          # points at, never an attacker-controllable input.
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Rust toolchain (pinned)
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b # stable @ 2026-04
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+
+      - name: Set up Node.js 22 (pinned)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Set up pnpm (pinned)
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 9
+          run_install: false
+
+      - name: Install uv with checksum verification (pinned)
+        # We use the official installer script directly rather than a third-party
+        # action so we can SHA256-verify the installer before executing it. This
+        # closes the "curl | sh" supply-chain hole.
+        env:
+          UV_VERSION: '0.5.11'
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf \
+            "https://astral.sh/uv/${UV_VERSION}/install.sh" -o /tmp/uv-install.sh
+          # Verify the installer hasn't been tampered with by recomputing its hash
+          # and checking it against the published checksum file.
+          curl --proto '=https' --tlsv1.2 -sSf \
+            "https://astral.sh/uv/${UV_VERSION}/install.sh.sha256" -o /tmp/uv-install.sh.sha256
+          expected="$(awk '{print $1}' /tmp/uv-install.sh.sha256)"
+          actual="$(shasum -a 256 /tmp/uv-install.sh | awk '{print $1}')"
+          if [[ "${expected}" != "${actual}" ]]; then
+            echo "::error::uv installer checksum mismatch (expected=${expected} actual=${actual})" >&2
+            exit 1
+          fi
+          sh /tmp/uv-install.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Xcode CLT sanity check
+        run: |
+          set -euo pipefail
+          xcode-select -p
+          clang --version
+
+      - name: Install Node dependencies (frozen)
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Python sidecar dependencies (frozen)
+        working-directory: python-sidecar
+        run: uv sync --frozen
+
+      - name: Build relocatable Python sidecar bundle
+        run: bash scripts/build-sidecar-bundle.sh
+
+      - name: Pre-release sanity — TypeScript typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Pre-release sanity — cargo check
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Pre-release sanity — Python tests
+        working-directory: python-sidecar
+        run: uv run pytest -q
+
+      - name: Build DMG via Tauri
+        # TODO: when an Apple Developer ID cert + notarization credentials are
+        # available, expose them via secrets and set:
+        #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
+        #   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+        # The DMG produced below is currently UNSIGNED / UNNOTARIZED.
+        run: pnpm tauri build
+
+      - name: Compute SHA256 of DMG artifact(s)
+        id: hash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(src-tauri/target/release/bundle/dmg/*.dmg)
+          if (( ${#dmgs[@]} == 0 )); then
+            echo "::error::No DMG produced under src-tauri/target/release/bundle/dmg/" >&2
+            exit 1
+          fi
+          shasum -a 256 "${dmgs[@]}" | tee SHA256SUMS.txt
+
+      - name: Publish GitHub Release (pinned, write-scoped)
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
+        # Elevate the workflow token only for this step — it's the only place
+        # that mutates repo state.
+        permissions:
+          contents: write
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          body: |
+            Auto-built release for ${{ github.ref_name }}. Verify the DMG hash against `SHA256SUMS.txt`.
+          files: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            SHA256SUMS.txt

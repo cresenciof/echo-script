@@ -20,8 +20,9 @@ target
 src-tauri/binaries/*
 !src-tauri/binaries/.gitkeep
 
-# Python sidecar (managed by a sibling agent)
+# Python sidecar venvs (dev + relocatable bundle for DMG packaging)
 python-sidecar/.venv
+python-sidecar/.venv-bundle
 python-sidecar/__pycache__
 python-sidecar/**/__pycache__
 
