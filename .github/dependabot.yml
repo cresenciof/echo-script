@@ -23,15 +23,15 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
-    # Block automatic major-version bumps across the board. Majors deserve a
-    # human review (API breakage, transitive dep changes, security implications).
-    # Open them manually with `dependabot recreate` when ready.
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
+    # NOTE: unlike npm/cargo/pip below, we ALLOW majors for github-actions.
+    # Action majors typically bump the JS runtime (e.g. Node 20 -> 24) rather
+    # than change the action's input/output API. Blocking majors here would
+    # silently let actions become deprecated and eventually broken. CI will
+    # still catch any API breakage from a bad bump.
     groups:
-      actions-minor-patch:
+      actions-all:
         update-types:
+          - "major"
           - "minor"
           - "patch"
 
