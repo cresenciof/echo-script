@@ -593,10 +593,21 @@ async fn compute_audio_peaks(
     // We don't need full audio fidelity here; we only need the envelope.
     const SAMPLE_RATE: u32 = 1000;
 
+    // Hard memory cap: refuse to keep more than this many bytes of raw PCM in
+    // RAM. At 1 kHz mono i16 (2 KB/s) this caps the effective audio length
+    // at ~6 hours — well past any reasonable transcription target, and well
+    // before we contribute to system memory pressure.
+    const MAX_PCM_BYTES: usize = 50 * 1024 * 1024; // 50 MB
+
     let mut child = Command::new(&ffmpeg)
         .args([
             "-v", "error",
             "-i", &audio_path,
+            // -vn: drop any video stream before decode. Without this,
+            // dropping a 4K .mp4 here would push ffmpeg to also process the
+            // video frames, which on a memory-pressured Mac can spiral into
+            // an OOM and (transitively) a kernel watchdog panic.
+            "-vn",
             "-f", "s16le",
             "-ac", "1",
             "-ar", &SAMPLE_RATE.to_string(),
@@ -613,10 +624,27 @@ async fn compute_audio_peaks(
         .ok_or_else(|| "ffmpeg stdout pipe missing".to_string())?;
     let stderr_handle = child.stderr.take();
 
-    // Drain raw PCM bytes into i16 samples.
-    let mut buf = Vec::with_capacity(1024 * 1024);
-    std::io::Read::read_to_end(&mut stdout, &mut buf)
-        .map_err(|e| format!("failed to read ffmpeg stdout: {e}"))?;
+    // Read in fixed-size chunks instead of `read_to_end` so we can bail out
+    // if the file is unreasonably large before the Vec grows unbounded.
+    let mut buf: Vec<u8> = Vec::with_capacity(1024 * 1024);
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        let n = std::io::Read::read(&mut stdout, &mut chunk)
+            .map_err(|e| format!("failed to read ffmpeg stdout: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        if buf.len() + n > MAX_PCM_BYTES {
+            // Kill ffmpeg immediately to free its own buffers, then bail.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "audio too long for waveform preview: > {} MB of PCM",
+                MAX_PCM_BYTES / 1024 / 1024
+            ));
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
     let status = child
         .wait()
         .map_err(|e| format!("ffmpeg wait failed: {e}"))?;

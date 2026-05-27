@@ -14,6 +14,8 @@ import os
 import signal
 import socket
 import sys
+import threading
+import time
 
 # Make sibling binaries (ffmpeg, ffprobe — bundled next to the Python
 # interpreter inside .venv-bundle/bin/) discoverable via subprocess.
@@ -56,6 +58,30 @@ def _install_signal_handlers(server: uvicorn.Server) -> None:
     signal.signal(signal.SIGINT, handler)
 
 
+def _watch_parent(initial_ppid: int, interval_s: float = 5.0) -> None:
+    """Daemon thread: poll the parent PID. If it changes (i.e. Tauri died
+    ungracefully and we got reparented to launchd) self-SIGTERM so the
+    Whisper model — up to ~3 GB of unified memory — is released within
+    a few seconds instead of lingering as a zombie.
+
+    Without this guard, kill -9 / force-quit / kernel panic on the Tauri
+    parent leaves us holding RAM that contributes to system-wide memory
+    pressure on subsequent runs.
+    """
+    log = logging.getLogger(__name__)
+    while True:
+        time.sleep(interval_s)
+        current = os.getppid()
+        if current != initial_ppid:
+            log.warning(
+                "parent process %d died (now reparented to %d) — exiting",
+                initial_ppid,
+                current,
+            )
+            os.kill(os.getpid(), signal.SIGTERM)
+            return
+
+
 def run(argv: list[str] | None = None) -> None:
     settings = Settings()
     parser = argparse.ArgumentParser(prog="whisper-sidecar")
@@ -70,6 +96,21 @@ def run(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     settings = Settings(host=args.host, port=args.port, log_level=args.log_level)
+
+    # Parent watchdog — orphan-detection. Set WHISPER_SIDECAR_NO_PARENT_WATCH=1
+    # to disable when running the sidecar standalone from a terminal where
+    # the shell may legitimately exit and re-attach.
+    if not os.environ.get("WHISPER_SIDECAR_NO_PARENT_WATCH"):
+        initial_ppid = os.getppid()
+        # ppid==1 means we were already launched directly by launchd; nothing
+        # to watch in that case.
+        if initial_ppid != 1:
+            threading.Thread(
+                target=_watch_parent,
+                args=(initial_ppid,),
+                daemon=True,
+                name="parent-watch",
+            ).start()
 
     port, sock = _pick_port(settings.host, settings.port)
     _announce_ready(port)
