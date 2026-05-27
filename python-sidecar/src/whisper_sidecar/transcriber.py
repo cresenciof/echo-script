@@ -244,14 +244,23 @@ class TranscriptionWorker:
             stdout_capture = _SegmentCaptureStream(sys.__stdout__, self._on_segment)
             stderr_capture = _DownloadCaptureStream(sys.__stderr__, self._on_download)
             start_t = time.time()
-            # mlx_whisper -> huggingface_hub pushes tqdm download bars to
-            # stderr; mlx_whisper's verbose segment output goes to stdout.
-            # We need BOTH redirected to surface the new model_download UX
-            # while keeping segment streaming working.
-            with contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):
-                if job.cancel_flag.is_set():
-                    raise InterruptedError("cancelled before start")
-                result = mlx_whisper.transcribe(job.audio_path, **kwargs)
+            # Mark the model as in-use so the idle unloader doesn't drop it
+            # mid-transcription. Always paired with `end_use` via try/finally.
+            from .model_lifecycle import get_default_lifecycle
+
+            lifecycle = get_default_lifecycle()
+            lifecycle.begin_use()
+            try:
+                # mlx_whisper -> huggingface_hub pushes tqdm download bars to
+                # stderr; mlx_whisper's verbose segment output goes to stdout.
+                # We need BOTH redirected to surface the new model_download UX
+                # while keeping segment streaming working.
+                with contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):
+                    if job.cancel_flag.is_set():
+                        raise InterruptedError("cancelled before start")
+                    result = mlx_whisper.transcribe(job.audio_path, **kwargs)
+            finally:
+                lifecycle.end_use()
             stdout_capture.flush()
             stderr_capture.flush()
             elapsed = time.time() - start_t

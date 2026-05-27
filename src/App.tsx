@@ -41,7 +41,7 @@ import {
   useJobsStore,
 } from "./state/useJobsStore";
 
-const DEFAULT_MODEL = "mlx-community/whisper-large-v3-turbo";
+const DEFAULT_MODEL = "mlx-community/whisper-large-v3-mlx-4bit";
 
 function App() {
   const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODEL);

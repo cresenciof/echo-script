@@ -59,19 +59,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     registry = JobRegistry(history=settings.job_history)
 
+    # Install a lifecycle tuned to the Settings — replaces the default
+    # singleton used by transcriber.py. Saves ~2-3 GB of RAM by dropping
+    # the cached mlx_whisper model after a quiet period.
+    from .model_lifecycle import ModelLifecycle, run_idle_unloader, set_default_lifecycle
+
+    lifecycle = ModelLifecycle(idle_seconds=settings.model_idle_unload_s)
+    set_default_lifecycle(lifecycle)
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         loop = asyncio.get_running_loop()
         _app.state.loop = loop
         _app.state.registry = registry
         _app.state.settings = settings
+        _app.state.model_lifecycle = lifecycle
+        # Background unloader. Disabled at idle_seconds <= 0.
+        unloader_task: asyncio.Task | None = None
+        if settings.model_idle_unload_s > 0:
+            unloader_task = asyncio.create_task(
+                run_idle_unloader(
+                    lifecycle,
+                    interval_seconds=settings.model_idle_check_interval_s,
+                ),
+                name="model-idle-unloader",
+            )
         logger.info("whisper-sidecar v%s ready", __version__)
-        yield
-        # Best-effort: signal cancel to all running jobs.
-        for job in registry.list_recent():
-            if not job.is_finished():
-                job.cancel_flag.set()
-                job.close_subscribers()
+        try:
+            yield
+        finally:
+            # Best-effort: signal cancel to all running jobs.
+            for job in registry.list_recent():
+                if not job.is_finished():
+                    job.cancel_flag.set()
+                    job.close_subscribers()
+            if unloader_task is not None:
+                unloader_task.cancel()
+                try:
+                    await unloader_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
 
     app = FastAPI(
         title="Whisper Sidecar",

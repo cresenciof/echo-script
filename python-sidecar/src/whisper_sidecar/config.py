@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     port: int = 0  # 0 = pick a free port at bind time
     log_level: str = "info"
     job_history: int = 20  # how many finished jobs to retain in memory
+    # Free the loaded Whisper model after this many seconds without a
+    # transcribe call. Set to 0 to disable. The next transcription pays
+    # ~2-5s of cold-start latency to reload from the HF cache.
+    model_idle_unload_s: float = 300.0
+    # How often the background unloader checks for idleness.
+    model_idle_check_interval_s: float = 30.0
 
     model_config = SettingsConfigDict(
         env_prefix="WHISPER_SIDECAR_",
@@ -22,25 +28,25 @@ class Settings(BaseSettings):
 # Hardcoded catalog the frontend uses to render a model picker.
 MODELS: list[dict] = [
     {
+        "id": "mlx-community/whisper-large-v3-mlx-4bit",
+        "label": "Large v3 (4-bit)",
+        "size_mb": 800,
+        "recommended": True,
+        "description": "Recommended. ~95% the quality of v3 Turbo with ~1 GB RAM instead of ~3 GB.",
+    },
+    {
         "id": "mlx-community/whisper-large-v3-turbo",
         "label": "Large v3 Turbo",
         "size_mb": 1620,
-        "recommended": True,
-        "description": "Best speed/quality balance. Recommended.",
+        "recommended": False,
+        "description": "Higher quality on noisy / accented audio. ~3 GB RAM.",
     },
     {
         "id": "mlx-community/whisper-large-v3-mlx",
         "label": "Large v3",
         "size_mb": 3100,
         "recommended": False,
-        "description": "Maximum quality, slower, more RAM.",
-    },
-    {
-        "id": "mlx-community/whisper-large-v3-mlx-4bit",
-        "label": "Large v3 (4-bit)",
-        "size_mb": 800,
-        "recommended": False,
-        "description": "Quantized. Good for low-RAM Macs.",
+        "description": "Maximum quality, slower, ~4+ GB RAM.",
     },
     {
         "id": "mlx-community/whisper-medium-mlx",
