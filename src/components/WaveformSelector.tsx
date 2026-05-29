@@ -1,9 +1,11 @@
 /**
- * Visual range selector — waveform + two draggable handles.
+ * Visual range selector — waveform + click-drag selection (Final Cut style).
  *
  * Shown after the user picks a file but BEFORE starting transcription.
- * Defaults to selecting the entire file; if the user adjusts the
- * handles, only the selected slice is sent to /transcribe (which
+ * Default behavior: no region → transcribe the whole file. The user can
+ * click and drag on the waveform to carve out a sub-range, which then
+ * supports translate (drag the middle) and resize (drag the handles). On
+ * confirm, the sub-range start_s/end_s is sent to /transcribe (which
  * ffmpeg-clips it server-side and offsets the segment timestamps).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -61,7 +63,12 @@ export function WaveformSelector({
   const [duration, setDuration] = useState(0);
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [range, setRange] = useState({ start: 0, end: 0 });
+  // `null` means "no selection made yet" → transcribe the whole file. A
+  // non-null range means the user dragged on the waveform to carve out
+  // a sub-region.
+  const [range, setRange] = useState<{ start: number; end: number } | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -69,7 +76,6 @@ export function WaveformSelector({
     if (!el) return;
 
     let cancelled = false;
-    let ws: WaveSurfer | null = null;
 
     const setup = async () => {
       try {
@@ -84,8 +90,14 @@ export function WaveformSelector({
         });
         if (cancelled) return;
 
+        // React 19 StrictMode replays effects in dev. If a previous mount
+        // left a canvas behind (its cleanup raced with WaveSurfer.create),
+        // wipe the container so we never end up with two stacked waveforms
+        // — the lower one would steal pointer events from the Region plugin.
+        while (el.firstChild) el.removeChild(el.firstChild);
+
         const regions = RegionsPlugin.create();
-        ws = WaveSurfer.create({
+        const ws = WaveSurfer.create({
           container: el,
           url: audioUrl, // for playback only; peaks below override decode
           peaks: [data.peaks],
@@ -101,22 +113,41 @@ export function WaveformSelector({
           normalize: true,
           plugins: [regions],
         });
-        wsRef.current = ws;
 
-        const dur = data.duration_s;
-        setDuration(dur);
-        const r = regions.addRegion({
-          start: 0,
-          end: dur,
-          drag: true,
-          resize: true,
+        // If cancellation flipped during the synchronous WaveSurfer.create,
+        // tear down what we just built and exit before anyone sees it.
+        if (cancelled) {
+          ws.destroy();
+          return;
+        }
+
+        wsRef.current = ws;
+        setDuration(data.duration_s);
+
+        // Final Cut / iMovie paradigm: the user click-drags on the
+        // waveform to carve out the region they want. The newly created
+        // region is then draggable (translate) AND resizable (handles).
+        // We do NOT seed an initial full-file region — covering 100% of
+        // the waveform would leave no background to drag-select on, and
+        // its drag handler would intercept pointer events before the
+        // plugin's drag-selection one fired.
+        regions.enableDragSelection({
           color: "oklch(from var(--primary) l c h / 0.18)",
         });
-        regionRef.current = r;
-        const sync = () => setRange({ start: r.start, end: r.end });
-        r.on("update", sync);
-        r.on("update-end", sync);
-        sync();
+
+        regions.on("region-created", (region: Region) => {
+          // Only one active selection at a time — replace the previous.
+          if (regionRef.current && regionRef.current !== region) {
+            regionRef.current.remove();
+          }
+          regionRef.current = region;
+          const sync = () =>
+            setRange({ start: region.start, end: region.end });
+          region.on("update", sync);
+          region.on("update-end", sync);
+          sync();
+        });
+
         setReady(true);
 
         ws.on("error", (e: Error) => {
@@ -127,7 +158,7 @@ export function WaveformSelector({
         ws.on("finish", () => setPlaying(false));
         ws.on("timeupdate", (currentTime) => {
           const region = regionRef.current;
-          if (!region || !ws) return;
+          if (!region) return;
           if (currentTime >= region.end) {
             ws.pause();
             ws.setTime(region.start);
@@ -150,7 +181,10 @@ export function WaveformSelector({
 
     return () => {
       cancelled = true;
-      ws?.destroy();
+      // Cleanup must read from the ref, not a closure-local — if cleanup
+      // fires before setup finishes (StrictMode race), the local is still
+      // null and the ref is the only path to whatever setup produced after.
+      wsRef.current?.destroy();
       wsRef.current = null;
       regionRef.current = null;
     };
@@ -159,19 +193,26 @@ export function WaveformSelector({
 
   const playSelection = useCallback(() => {
     const ws = wsRef.current;
-    const r = regionRef.current;
-    if (!ws || !r) return;
+    if (!ws) return;
     if (playing) {
       ws.pause();
-    } else {
-      // Start from region.start every time the user hits play.
-      ws.setTime(r.start);
-      ws.play();
+      return;
     }
+    const r = regionRef.current;
+    // With a selection: start from its head each press. Without one:
+    // play the whole file from where the cursor is, or from 0 if it's
+    // sitting past the end.
+    if (r) {
+      ws.setTime(r.start);
+    } else if (ws.getCurrentTime() >= ws.getDuration()) {
+      ws.setTime(0);
+    }
+    ws.play();
   }, [playing]);
 
-  const selectedDuration = Math.max(0, range.end - range.start);
+  const selectedDuration = range ? Math.max(0, range.end - range.start) : 0;
   const isFullFile = useMemo(() => {
+    if (!range) return true;
     if (duration <= 0) return true;
     // Treat near-edge selections as "full file" — saves the user from
     // pixel-perfect handle positioning.
@@ -179,11 +220,17 @@ export function WaveformSelector({
   }, [range, duration]);
 
   const handleTranscribe = () => {
-    if (isFullFile || selectedDuration < 0.5) {
+    if (!range || isFullFile || selectedDuration < 0.5) {
       onConfirm(null);
       return;
     }
     onConfirm({ startS: range.start, endS: range.end });
+  };
+
+  const handleClearSelection = () => {
+    regionRef.current?.remove();
+    regionRef.current = null;
+    setRange(null);
   };
 
   return (
@@ -220,6 +267,11 @@ export function WaveformSelector({
             Loading waveform…
           </p>
         )}
+        {ready && !range && !error && (
+          <p className="mt-3 text-center font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/60">
+            Click and drag on the waveform to select a range
+          </p>
+        )}
         {error && (
           <p className="mt-2 text-center text-[12px] text-destructive">
             {error}
@@ -231,7 +283,7 @@ export function WaveformSelector({
         <div className="flex items-center gap-3">
           <button
             type="button"
-            aria-label={playing ? "Pause selection" : "Play selection"}
+            aria-label={playing ? "Pause" : "Play"}
             onClick={playSelection}
             disabled={!ready}
             className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground transition-all hover:scale-105 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:bg-muted disabled:text-muted-foreground"
@@ -244,23 +296,38 @@ export function WaveformSelector({
           </button>
           <div className="flex flex-col">
             <span className="text-foreground">
-              {formatHMS(range.start)} → {formatHMS(range.end)}
+              {range
+                ? `${formatHMS(range.start)} → ${formatHMS(range.end)}`
+                : `0:00 → ${formatHMS(duration)}`}
             </span>
             <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground/60">
-              {formatHMS(selectedDuration)} of {formatHMS(duration)}
+              {range
+                ? `${formatHMS(selectedDuration)} of ${formatHMS(duration)}`
+                : `${formatHMS(duration)} total`}
             </span>
           </div>
         </div>
-        <span
-          className={cn(
-            "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em]",
-            isFullFile
-              ? "border-border bg-muted text-muted-foreground"
-              : "border-primary/30 bg-primary/15 text-primary",
+        <div className="flex items-center gap-2">
+          {range && !isFullFile && (
+            <button
+              type="button"
+              onClick={handleClearSelection}
+              className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Clear
+            </button>
           )}
-        >
-          {isFullFile ? "Full file" : "Selection"}
-        </span>
+          <span
+            className={cn(
+              "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em]",
+              isFullFile
+                ? "border-border bg-muted text-muted-foreground"
+                : "border-primary/30 bg-primary/15 text-primary",
+            )}
+          >
+            {isFullFile ? "Full file" : "Selection"}
+          </span>
+        </div>
       </div>
 
       <div className="flex items-center justify-end gap-2">
