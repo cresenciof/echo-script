@@ -56,7 +56,7 @@ python -c "from huggingface_hub import snapshot_download; snapshot_download('mlx
 - **Click-to-seek transcript** — click a segment, the audio jumps there
 - **Export** — TXT, SRT, VTT, Markdown, and for videos: soft subtitles (track) or burned-in subtitles
 - **Idle model unloading** — frees ~3 GB of unified memory when idle for 5 min
-- **100% offline** — no cloud, no telemetry, no analytics
+- **Offline after setup** — the only network access is the one-time model download from Hugging Face; transcription itself never touches the network. No cloud, no telemetry, no analytics.
 - **Multiple Whisper models** — 4-bit quantized (default), turbo, large, medium, small
 
 <img width="1212" alt="Waveform region selector" src="https://github.com/user-attachments/assets/02c63ac4-a357-457e-be8e-5c8048e0d5d6" />
@@ -73,7 +73,7 @@ python -c "from huggingface_hub import snapshot_download; snapshot_download('mlx
 | Open source                   | ✅                | ❌          | ❌          | ✅           |
 | Native macOS UI               | ✅                | ✅          | ✅          | ❌ (CLI)     |
 | Apple Silicon optimized       | ✅ MLX            | ✅ Core ML  | ✅ Core ML  | ✅ Metal     |
-| 100% offline                  | ✅                | ✅          | ✅          | ✅           |
+| Offline transcription¹        | ✅                | ✅          | ✅          | ✅           |
 | Drag-and-drop video           | ✅                | ✅          | ❌          | ❌           |
 | Waveform region selection     | ✅                | ✅          | ❌          | ❌           |
 | Live segment streaming        | ✅                | ✅          | ❌          | partial     |
@@ -82,6 +82,8 @@ python -c "from huggingface_hub import snapshot_download; snapshot_download('mlx
 | Speaker diarization           | ❌                | ✅          | ❌          | ❌           |
 | Translation                   | planned          | ✅          | ✅          | ✅           |
 | Batch queue                   | ❌                | ✅          | ❌          | n/a         |
+
+¹ All four download the Whisper model once over the network; after that, transcription runs fully offline.
 
 > Honest note: MacWhisper has years of polish and features Echo Script doesn't (yet). Echo Script targets the core "drop file → get transcript" workflow at zero cost, with the code open for inspection.
 
