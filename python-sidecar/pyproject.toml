@@ -9,7 +9,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.136.3",
     "mlx-whisper>=0.4.3",
-    "pydantic-settings>=2",
+    "pydantic-settings>=2.14.2",
     "python-multipart>=0.0.29",
     "sse-starlette>=3.4.4",
     "uvicorn[standard]>=0.48.0",
